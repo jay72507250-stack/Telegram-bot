@@ -172,6 +172,11 @@ def match_callbacks(call):
         conn.close()
         
         bot.answer_callback_query(call.id, "Liked!")
+        try:
+            bot.send_message(liked_id, "💖 Kisi ne aapki profile Like ki hai!")
+        except Exception as e:
+            print(e)
+
         if mutual:
             bot.send_message(user_id, "IT'S A MATCH! 🎉 You both liked each other.")
             bot.send_message(liked_id, "IT'S A MATCH! 🎉 Someone liked you back.")
