@@ -158,7 +158,7 @@ def find_match(message):
     )
     bot.send_photo(user_id, photo_id, caption=caption, reply_markup=markup)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("like_") or call.data == "pass_next")
+@bot.callback_query_handler(func=lambda call: call.data.startswith(("like_", "pass_")))
 def match_callbacks(call):
     user_id = call.from_user.id
     if call.data.startswith("like_"):
@@ -170,17 +170,23 @@ def match_callbacks(call):
         mutual = c.fetchone()
         conn.commit()
         conn.close()
-        
+
         bot.answer_callback_query(call.id, "Liked!")
         try:
-            bot.send_message(liked_id, "💖 Kisi ne aapki profile Like ki hai!")
+            bot.send_message(liked_id, "💖 Someone liked your profile! Click 'Find Match' to view profiles.")
         except Exception as e:
             print(e)
 
         if mutual:
-            bot.send_message(user_id, "IT'S A MATCH! 🎉 You both liked each other.")
-            bot.send_message(liked_id, "IT'S A MATCH! 🎉 Someone liked you back.")
+            bot.send_message(user_id, "IT'S A MATCH! 🎉")
+            bot.send_message(liked_id, "IT'S A MATCH! 🎉")
+        
         find_match(call.message)
+
+    elif call.data.startswith("pass_"):
+        bot.answer_callback_query(call.id, "Passed")
+        find_match(call.message)
+
     else:
         bot.answer_callback_query(call.id, "Passed")
         find_match(call.message)
