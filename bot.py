@@ -161,6 +161,12 @@ def find_match(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith(("like_", "pass_")))
 def match_callbacks(call):
     user_id = call.from_user.id
+    
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception as e:
+        print(f"Error deleting message: {e}")
+
     if call.data.startswith("like_"):
         liked_id = int(call.data.split("_")[1])
         conn = sqlite3.connect('dating.db')
@@ -181,15 +187,11 @@ def match_callbacks(call):
             bot.send_message(user_id, "IT'S A MATCH! 🎉")
             bot.send_message(liked_id, "IT'S A MATCH! 🎉")
         
-        find_match(call.message)
-
     elif call.data.startswith("pass_"):
         bot.answer_callback_query(call.id, "Passed")
-        find_match(call.message)
 
-    else:
-        bot.answer_callback_query(call.id, "Passed")
-        find_match(call.message)
+    find_match(call.message)
+
 
 # --- INSTANT RANDOM CHAT (FREE) ---
 @bot.message_handler(func=lambda msg: msg.text == "Instant Chat")
