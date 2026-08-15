@@ -136,27 +136,34 @@ def my_profile(message):
 
 # --- FIND MATCH (LIKE / PASS) ---
 @bot.message_handler(func=lambda msg: msg.text == "Find Match")
-def find_match(message):
-    user_id = message.from_user.id
+def find_match_handler(message):
+    find_match(message.chat.id)
+
+def find_match(chat_id):
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
-    c.execute("SELECT user_id, name, age, gender, bio, photo_id FROM users WHERE user_id != ? ORDER BY RANDOM() LIMIT 1", (user_id,))
+    c.execute("""
+        SELECT * FROM users 
+        WHERE user_id != ? 
+        AND user_id NOT IN (SELECT liked_user_id FROM likes WHERE user_id = ?)
+        ORDER BY RANDOM() LIMIT 1
+    """, (chat_id, chat_id))
     target = c.fetchone()
     conn.close()
-    
+
     if not target:
-        bot.send_message(user_id, "No profiles available right now! Check back later.")
+        bot.send_message(chat_id, "No profiles available right now! Try later.")
         return
-    
+
     target_id, name, age, gender, bio, photo_id = target
     caption = f"Profile Card\n\nName: {name}, Age: {age}\nGender: {gender}\nBio: {bio}"
     
     markup = types.InlineKeyboardMarkup()
     markup.row(
         types.InlineKeyboardButton("Like ❤️", callback_data=f"like_{target_id}"),
-        types.InlineKeyboardButton("Pass ❌", callback_data="pass_next")
+        types.InlineKeyboardButton("Pass ❌", callback_data=f"pass_{target_id}")
     )
-    bot.send_photo(user_id, photo_id, caption=caption, reply_markup=markup)
+    bot.send_photo(chat_id, photo_id, caption=caption, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith(("like_", "pass_")))
 def match_callbacks(call):
@@ -165,32 +172,35 @@ def match_callbacks(call):
     try:
         bot.delete_message(call.message.chat.id, call.message.message_id)
     except Exception as e:
-        print(f"Error deleting message: {e}")
+        print(e)
 
     if call.data.startswith("like_"):
         liked_id = int(call.data.split("_")[1])
         conn = sqlite3.connect('dating.db')
         c = conn.cursor()
         c.execute("INSERT OR IGNORE INTO likes VALUES (?, ?)", (user_id, liked_id))
+        
         c.execute("SELECT * FROM likes WHERE user_id = ? AND liked_user_id = ?", (liked_id, user_id))
         mutual = c.fetchone()
         conn.commit()
         conn.close()
 
         bot.answer_callback_query(call.id, "Liked!")
-        try:
-            bot.send_message(liked_id, "💖 Someone liked your profile! Click 'Find Match' to view profiles.")
-        except Exception as e:
-            print(e)
-
+        
         if mutual:
             bot.send_message(user_id, "IT'S A MATCH! 🎉")
             bot.send_message(liked_id, "IT'S A MATCH! 🎉")
+        else:
+            try:
+                bot.send_message(liked_id, "💖 Someone liked your profile! Click 'Find Match' to view profiles.")
+            except Exception as e:
+                print(e)
         
     elif call.data.startswith("pass_"):
         bot.answer_callback_query(call.id, "Passed")
 
-    find_match(call.message)
+    find_match(user_id)
+
 
 
 # --- INSTANT RANDOM CHAT (FREE) ---
