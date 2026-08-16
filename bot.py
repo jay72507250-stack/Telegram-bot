@@ -1,14 +1,12 @@
 import telebot
 from telebot import types
 import sqlite3
-import datetime
 
 # ⚠️ YAHAN APNA ORIGINAL BOT TOKEN DAALO
 API_TOKEN = '8505897253:AAGliSrXAa2nh-TzIEMdAm8sR2UcWnbt1dI'
 bot = telebot.TeleBot(API_TOKEN)
 
-ADMIN_ID = 8310681464
-  # 👈 Apna Telegram User ID yahan daalo (Admin Commands ke liye)
+ADMIN_ID = 8310681464  # Aapki Admin Telegram User ID
 
 # --- DATABASE SETUP ---
 def init_db():
@@ -49,10 +47,10 @@ def main_keyboard(user_id):
     markup.row("🔥 Find Match", "💬 Instant Chat")
     markup.row("👤 My Profile", "✏️ Edit Profile")
     if not is_vip:
-        markup.row("⭐ Buy Premium VIP")
+        markup.row("⭐ Buy Premium VIP (20 Stars)")
     return markup
 
-# --- ADMIN COMMAND TO GIVE VIP ---
+# --- ADMIN COMMAND TO MANUAL VIP ---
 @bot.message_handler(commands=['addvip'])
 def add_vip_cmd(message):
     if message.from_user.id != ADMIN_ID:
@@ -66,7 +64,7 @@ def add_vip_cmd(message):
         conn.close()
         bot.send_message(message.chat.id, f"✅ User {target_user} is now VIP!")
         bot.send_message(target_user, "🎉 Congratulations! You have been upgraded to VIP Member!")
-    except Exception as e:
+    except Exception:
         bot.send_message(message.chat.id, "Usage: /addvip USER_ID")
 
 # --- REGISTRATION & START ---
@@ -129,18 +127,39 @@ def get_photo(message):
     del user_states[user_id]
     bot.send_message(user_id, "Profile created successfully! 🎉", reply_markup=main_keyboard(user_id))
 
-# --- BUY VIP MENU ---
-@bot.message_handler(func=lambda msg: msg.text == "⭐ Buy Premium VIP")
-def buy_vip(message):
-    text = (
-        "👑 *VIP PREMIUM FEATURES* 👑\n\n"
-        "✨ Profile par VIP Crown Badge\n"
-        "✨ DIRECT CONTACT access\n"
-        "✨ Unlimited Profiles Match\n\n"
-        "💰 *Price:* ₹99 / Month\n\n"
-        "Payment ke liye Admin ko contact karein: `@your_telegram_username`"
+# --- TELEGRAM STARS PAYMENT SYSTEM ---
+@bot.message_handler(func=lambda msg: msg.text in ["⭐ Buy Premium VIP", "⭐ Buy Premium VIP (20 Stars)"])
+def send_stars_invoice(message):
+    prices = [types.LabeledPrice(label="VIP Membership (1 Month)", amount=20)]
+    bot.send_invoice(
+        message.chat.id,
+        title="⭐ VIP Premium Pass",
+        description="Unlock VIP Crown Badge, Unlimited Swiping, and Direct Matches Access!",
+        invoice_payload="vip_subscription_payload",
+        provider_token="",  # Telegram Stars ke liye token empty rehta hai
+        currency="XTR",     # XTR is the currency code for Telegram Stars
+        prices=prices,
+        start_parameter="vip-membership"
     )
-    bot.send_message(message.chat.id, text, parse_mode="Markdown")
+
+@bot.pre_checkout_query_handler(func=lambda query: True)
+def process_pre_checkout(pre_checkout_query):
+    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
+@bot.message_handler(content_types=['successful_payment'])
+def process_successful_payment(message):
+    user_id = message.from_user.id
+    conn = sqlite3.connect('dating.db')
+    c = conn.cursor()
+    c.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+
+    bot.send_message(
+        user_id,
+        "🎉 Payment Successful!\n\nCongratulations, you are now a ⭐ VIP Member! Enjoy your premium perks.",
+        reply_markup=main_keyboard(user_id)
+    )
 
 # --- MY PROFILE ---
 @bot.message_handler(func=lambda msg: msg.text in ["👤 My Profile", "✏️ Edit Profile"])
