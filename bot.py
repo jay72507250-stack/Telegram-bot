@@ -3,9 +3,10 @@ from telebot import types
 import sqlite3
 
 # ⚠️ YAHAN APNA BOT TOKEN REPLACE KARO
-API_TOKEN = '8505897253:AAH9mpVj6H5C8OSMtsvhl1UzHuEwJeVBKn4'  
+API_TOKEN = '8505897253:AAH9mpVj6H5C8OSMtsvhl1UzHuEwJeVBKn4'
 bot = telebot.TeleBot(API_TOKEN)
 
+# --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
@@ -22,6 +23,99 @@ def init_db():
 
 init_db()
 
+# Global variables
+user_states = {}
+active_chats = {}
+waiting_queue = []
+
+def main_keyboard():
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.row("Find Match", "Instant Chat")
+    markup.row("My Profile", "Edit Profile")
+    return markup
+
+# --- START & PROFILE REGISTRATION ---
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    user_id = message.from_user.id
+    conn = sqlite3.connect('dating.db')
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = c.fetchone()
+    conn.close()
+
+    if user:
+        bot.send_message(user_id, "Welcome back!", reply_markup=main_keyboard())
+    else:
+        user_states[user_id] = {'step': 'NAME'}
+        bot.send_message(user_id, "Welcome! Let's set up your profile.\n\nPlease enter your Name:")
+
+@bot.message_handler(func=lambda msg: msg.from_user.id in user_states)
+def registration_flow(message):
+    user_id = message.from_user.id
+    step = user_states[user_id].get('step')
+
+    if step == 'NAME':
+        user_states[user_id]['name'] = message.text
+        user_states[user_id]['step'] = 'AGE'
+        bot.send_message(user_id, "Great! Now enter your Age:")
+    elif step == 'AGE':
+        if not message.text.isdigit():
+            bot.send_message(user_id, "Please enter a valid number for Age:")
+            return
+        user_states[user_id]['age'] = int(message.text)
+        user_states[user_id]['step'] = 'GENDER'
+        bot.send_message(user_id, "Enter your Gender (e.g., Male/Female):")
+    elif step == 'GENDER':
+        user_states[user_id]['gender'] = message.text
+        user_states[user_id]['step'] = 'BIO'
+        bot.send_message(user_id, "Write a short Bio about yourself:")
+    elif step == 'BIO':
+        user_states[user_id]['bio'] = message.text
+        user_states[user_id]['step'] = 'PHOTO'
+        bot.send_message(user_id, "Now send a photo of yourself:")
+
+@bot.message_handler(content_types=['photo'], func=lambda msg: msg.from_user.id in user_states and user_states[msg.from_user.id].get('step') == 'PHOTO')
+def get_photo(message):
+    user_id = message.from_user.id
+    photo_id = message.photo[-1].file_id
+    data = user_states[user_id]
+    username = message.from_user.username or ""
+
+    conn = sqlite3.connect('dating.db')
+    c = conn.cursor()
+    c.execute("""
+        INSERT OR REPLACE INTO users (user_id, name, age, gender, bio, photo_id, username)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (user_id, data['name'], data['age'], data['gender'], data['bio'], photo_id, username))
+    conn.commit()
+    conn.close()
+
+    del user_states[user_id]
+    bot.send_message(user_id, "Profile saved successfully! 🎉", reply_markup=main_keyboard())
+
+# --- MY PROFILE ---
+@bot.message_handler(func=lambda msg: msg.text in ["My Profile", "Edit Profile"])
+def my_profile(message):
+    user_id = message.from_user.id
+    if message.text == "Edit Profile":
+        user_states[user_id] = {'step': 'NAME'}
+        bot.send_message(user_id, "Let's update your profile!\n\nPlease enter your Name:")
+        return
+
+    conn = sqlite3.connect('dating.db')
+    c = conn.cursor()
+    c.execute("SELECT name, age, gender, bio, photo_id FROM users WHERE user_id = ?", (user_id,))
+    user = c.fetchone()
+    conn.close()
+
+    if user:
+        caption = f"👤 Your Profile\n\nName: {user[0]}, Age: {user[1]}\nGender: {user[2]}\nBio: {user[3]}"
+        bot.send_photo(user_id, user[4], caption=caption)
+    else:
+        bot.send_message(user_id, "Please set up your profile first by typing /start")
+
+# --- FIND MATCH ---
 def find_match(chat_id):
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
@@ -94,6 +188,53 @@ def match_callbacks(call):
 
     conn.close()
     find_match(user_id)
+
+# --- INSTANT RANDOM CHAT ---
+@bot.message_handler(func=lambda msg: msg.text == "Instant Chat")
+def instant_chat(message):
+    user_id = message.from_user.id
+    if user_id in active_chats:
+        bot.send_message(user_id, "You are already in an active chat!")
+        return
+
+    if waiting_queue and waiting_queue[0] != user_id:
+        partner_id = waiting_queue.pop(0)
+        active_chats[user_id] = partner_id
+        active_chats[partner_id] = user_id
+
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("End Chat")
+
+        bot.send_message(user_id, "Connected! You can now chat anonymously.", reply_markup=markup)
+        bot.send_message(partner_id, "Connected! You can now chat anonymously.", reply_markup=markup)
+    else:
+        if user_id not in waiting_queue:
+            waiting_queue.append(user_id)
+        bot.send_message(user_id, "Searching for a partner... Please wait.")
+
+@bot.message_handler(func=lambda msg: msg.text == "End Chat")
+def end_chat(message):
+    user_id = message.from_user.id
+    if user_id in active_chats:
+        partner_id = active_chats.pop(user_id)
+        active_chats.pop(partner_id, None)
+
+        bot.send_message(user_id, "Chat ended successfully.", reply_markup=main_keyboard())
+        bot.send_message(partner_id, "Partner ended the chat.", reply_markup=main_keyboard())
+    elif user_id in waiting_queue:
+        waiting_queue.remove(user_id)
+        bot.send_message(user_id, "Stopped searching.", reply_markup=main_keyboard())
+    else:
+        bot.send_message(user_id, "You are not in any chat.")
+
+@bot.message_handler(func=lambda msg: msg.from_user.id in active_chats)
+def relay_message(message):
+    user_id = message.from_user.id
+    partner_id = active_chats[user_id]
+    if message.text:
+        bot.send_message(partner_id, message.text)
+    elif message.photo:
+        bot.send_photo(partner_id, message.photo[-1].file_id, caption=message.caption)
 
 bot.infinity_polling()
 
