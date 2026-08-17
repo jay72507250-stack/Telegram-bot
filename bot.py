@@ -132,10 +132,19 @@ def registration_flow(message):
         user_states[user_id]['step'] = 'PHOTO'
         bot.send_message(user_id, "Now send a Photo of yourself:", reply_markup=types.ReplyKeyboardRemove())
 
-@bot.message_handler(content_types=['photo'], func=lambda msg: msg.from_user.id in user_states and user_states[msg.from_user.id].get('step') == 'PHOTO')
+# --- PHOTO & DOCUMENT HANDLER (FIXED) ---
+@bot.message_handler(content_types=['photo', 'document'], func=lambda msg: msg.from_user.id in user_states and user_states[msg.from_user.id].get('step') == 'PHOTO')
 def get_photo(message):
     user_id = message.from_user.id
-    photo_id = message.photo[-1].file_id
+    
+    if message.photo:
+        photo_id = message.photo[-1].file_id
+    elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
+        photo_id = message.document.file_id
+    else:
+        bot.send_message(user_id, "⚠️ Please send a valid Image/Photo file!")
+        return
+
     data = user_states[user_id]
     username = message.from_user.username or ""
 
@@ -254,7 +263,6 @@ def find_match(chat_id):
     u_city = c.fetchone()
     user_city = u_city[0] if u_city else ""
 
-    # Real users priority matching
     c.execute("""
         SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
         WHERE user_id IN (SELECT user_id FROM swipes WHERE target_id = ? AND action = 'like')
