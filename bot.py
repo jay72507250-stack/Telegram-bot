@@ -4,20 +4,25 @@ import sqlite3
 import datetime
 import traceback
 
-# ⚠️ YAHAN APNA TELEGRAM BOT TOKEN DAALO
+# ⚠️ APNA TELEGRAM BOT TOKEN DAALO
 API_TOKEN = '8505897253:AAGliSrXAa2nh-TzIEMdAm8sR2UcWnbt1dI'
 bot = telebot.TeleBot(API_TOKEN)
 
 ADMIN_ID = 8310681464
 
-# --- DATABASE SETUP (AUTO CLEAN SCHEMA) ---
+# --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (user_id INTEGER PRIMARY KEY, name TEXT, age INTEGER, gender TEXT, city TEXT, bio TEXT, photo_id TEXT, username TEXT, is_vip INTEGER DEFAULT 0, vip_expiry TEXT, referrer_id INTEGER, is_verified INTEGER DEFAULT 0)''')
     
-    # Auto add missing columns if upgrading old database
+    c.execute('''CREATE TABLE IF NOT EXISTS user_states 
+                 (user_id INTEGER PRIMARY KEY, step TEXT, name TEXT, age INTEGER, gender TEXT, city TEXT, bio TEXT, referrer_id INTEGER)''')
+
+    c.execute('''CREATE TABLE IF NOT EXISTS swipes 
+                 (user_id INTEGER, target_id INTEGER, action TEXT, UNIQUE(user_id, target_id))''')
+
     columns = ["city TEXT", "vip_expiry TEXT", "referrer_id INTEGER", "is_verified INTEGER DEFAULT 0", "username TEXT", "is_vip INTEGER DEFAULT 0"]
     for col in columns:
         try:
@@ -25,16 +30,12 @@ def init_db():
         except:
             pass
 
-    c.execute('''CREATE TABLE IF NOT EXISTS swipes 
-                 (user_id INTEGER, target_id INTEGER, action TEXT, UNIQUE(user_id, target_id))''')
-
     c.execute("DELETE FROM users WHERE user_id >= 9990")
     conn.commit()
     conn.close()
 
 init_db()
 
-user_states = {}
 active_chats = {}
 waiting_queue = []
 
@@ -63,14 +64,13 @@ def check_vip_status(user_id):
 def main_keyboard(user_id):
     is_vip = check_vip_status(user_id)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.row("🔥 Find Match", "💬 Instant Chat")
-    markup.row("👤 My Profile", "🎁 Invite & Earn VIP")
-    if not is_vip:
-        markup.row("⭐ Buy Premium VIP (20 Stars)")
+    markup.row("🔥 Match Dhoondo", "💬 Instant Chat")
+    markup.row("👤 Meri Profile", "✏️ Edit Profile")
+    markup.row("🎁 Friends Invite Karo", "⭐ Buy VIP Pass")
     return markup
 
-# --- REGISTRATION START ---
-@bot.message_handler(commands=['start'])
+# --- REGISTRATION / RESET START ---
+@bot.message_handler(commands=['start', 'reset'])
 def start_cmd(message):
     user_id = message.from_user.id
     args = message.text.split()
@@ -78,19 +78,36 @@ def start_cmd(message):
 
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
+    
+    if message.text.startswith('/reset'):
+        c.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+        c.execute("DELETE FROM user_states WHERE user_id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+        bot.send_message(user_id, "🔄 Aapki purani profile delete kar di gayi hai! Nayi profile banayein.\n\nAapka Name kya hai?", reply_markup=types.ReplyKeyboardRemove())
+        
+        conn = sqlite3.connect('dating.db')
+        c = conn.cursor()
+        c.execute("INSERT OR REPLACE INTO user_states (user_id, step, referrer_id) VALUES (?, 'NAME', ?)", (user_id, referrer))
+        conn.commit()
+        conn.close()
+        return
+
     c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = c.fetchone()
-    conn.close()
-
+    
     if user:
-        bot.send_message(user_id, "Welcome back! Choose an option:", reply_markup=main_keyboard(user_id))
+        conn.close()
+        bot.send_message(user_id, "Wapas aane ke liye shukriya! Niche se option chunein:", reply_markup=main_keyboard(user_id))
     else:
-        user_states[user_id] = {'step': 'NAME', 'referrer': referrer}
-        bot.send_message(user_id, "Welcome to Dating Bot! 🎉\n\nWhat is your Name?", reply_markup=types.ReplyKeyboardRemove())
+        c.execute("INSERT OR REPLACE INTO user_states (user_id, step, referrer_id) VALUES (?, 'NAME', ?)", (user_id, referrer))
+        conn.commit()
+        conn.close()
+        bot.send_message(user_id, "Dating Bot me Aapka Swagat Hai! 🎉\n\nAapka Name kya hai?", reply_markup=types.ReplyKeyboardRemove())
 
-# --- PHOTO HANDLER (PLACED FIRST TO PREVENT INTERCEPT) ---
+# --- PHOTO HANDLER ---
 @bot.message_handler(content_types=['photo', 'document'])
-def get_photo(message):
+def handle_photo(message):
     user_id = message.from_user.id
 
     if user_id in active_chats:
@@ -99,8 +116,14 @@ def get_photo(message):
             bot.send_photo(partner_id, message.photo[-1].file_id, caption=message.caption)
         return
 
-    if user_id not in user_states or user_states[user_id].get('step') != 'PHOTO':
-        bot.send_message(user_id, "⚠️ Active session nahi mila. Kripya /start dabayein.")
+    conn = sqlite3.connect('dating.db')
+    c = conn.cursor()
+    c.execute("SELECT step, name, age, gender, city, bio, referrer_id FROM user_states WHERE user_id = ?", (user_id,))
+    state = c.fetchone()
+
+    if not state or state[0] != 'PHOTO':
+        conn.close()
+        bot.send_message(user_id, "⚠️ Kripya profile reset karne ke liye /reset type karein ya menu chunein.")
         return
 
     try:
@@ -110,90 +133,125 @@ def get_photo(message):
         elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
             photo_id = message.document.file_id
         else:
+            conn.close()
             bot.send_message(user_id, "⚠️ Kripya valid Photo/Image file bhejein!")
             return
 
-        data = user_states[user_id]
         username = message.from_user.username or ""
+        _, name, age, gender, city, bio, referrer_id = state
 
-        conn = sqlite3.connect('dating.db')
-        c = conn.cursor()
         c.execute("""
             INSERT OR REPLACE INTO users (user_id, name, age, gender, city, bio, photo_id, username, is_vip, referrer_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-        """, (user_id, data['name'], data['age'], data['gender'], data['city'], data['bio'], photo_id, username, data.get('referrer')))
+        """, (user_id, name, age, gender, city, bio, photo_id, username, referrer_id))
 
-        if data.get('referrer'):
-            ref_id = data['referrer']
-            c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (ref_id,))
+        if referrer_id:
+            c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (referrer_id,))
             ref_count = c.fetchone()[0]
             if ref_count >= 3:
                 expiry = (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
-                c.execute("UPDATE users SET is_vip = 1, vip_expiry = ? WHERE user_id = ?", (expiry, ref_id))
+                c.execute("UPDATE users SET is_vip = 1, vip_expiry = ? WHERE user_id = ?", (expiry, referrer_id))
                 try:
-                    bot.send_message(ref_id, "🎉 Congratulations! You referred 3 friends and unlocked 1 Month FREE VIP Pass! ⭐")
+                    bot.send_message(referrer_id, "🎉 Congratulations! VIP Pass Unlock ho gaya!")
                 except:
                     pass
 
+        c.execute("DELETE FROM user_states WHERE user_id = ?", (user_id,))
         conn.commit()
         conn.close()
 
-        del user_states[user_id]
-        bot.send_message(user_id, "Profile created successfully! 🎉", reply_markup=main_keyboard(user_id))
+        bot.send_message(user_id, "Profile safaltapoorvak ban gayi hai! 🎉", reply_markup=main_keyboard(user_id))
 
     except Exception as e:
+        conn.close()
         print(f"Error in photo upload: {e}")
-        traceback.print_exc()
-        bot.send_message(user_id, f"⚠️ An error occurred while saving photo. Please type /start again.")
+        bot.send_message(user_id, f"⚠️ Error aaya hai. Kripya dobara /reset type karein.")
 
-# --- REGISTRATION STEPS ---
-@bot.message_handler(func=lambda msg: msg.from_user.id in user_states)
-def registration_flow(message):
+# --- TEXT FLOW & MENU ---
+@bot.message_handler(content_types=['text'])
+def handle_text(message):
     user_id = message.from_user.id
-    step = user_states[user_id].get('step')
+    text = message.text
 
-    if step == 'NAME':
-        user_states[user_id]['name'] = message.text
-        user_states[user_id]['step'] = 'AGE'
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("18", "19", "20", "21")
-        markup.row("22", "23", "24", "25")
-        bot.send_message(user_id, "Select or Type your Age:", reply_markup=markup)
+    if user_id in active_chats:
+        if text in ["🚫 End Chat", "Chat Khatam Karein"]:
+            partner_id = active_chats.pop(user_id)
+            active_chats.pop(partner_id, None)
+            bot.send_message(partner_id, "Partner ne chat khatam kar di.", reply_markup=main_keyboard(partner_id))
+            bot.send_message(user_id, "Chat band ho gayi.", reply_markup=main_keyboard(user_id))
+        else:
+            bot.send_message(active_chats[user_id], text)
+        return
 
-    elif step == 'AGE':
-        if not message.text.isdigit():
-            bot.send_message(user_id, "Please select or enter a valid age in numbers:")
-            return
-        user_states[user_id]['age'] = int(message.text)
-        user_states[user_id]['step'] = 'GENDER'
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("👨 Male", "👩 Female")
-        bot.send_message(user_id, "Select your Gender:", reply_markup=markup)
+    conn = sqlite3.connect('dating.db')
+    c = conn.cursor()
+    c.execute("SELECT step FROM user_states WHERE user_id = ?", (user_id,))
+    state = c.fetchone()
 
-    elif step == 'GENDER':
-        gender_text = "Male" if "Male" in message.text else "Female"
-        user_states[user_id]['gender'] = gender_text
-        user_states[user_id]['step'] = 'CITY'
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("Mumbai", "Delhi", "Ahmedabad", "Rajkot")
-        markup.row("Bangalore", "Pune", "Surat", "Jaipur")
-        bot.send_message(user_id, "Select or type your City:", reply_markup=markup)
+    if state:
+        step = state[0]
+        
+        if step == 'NAME':
+            c.execute("UPDATE user_states SET step = 'AGE', name = ? WHERE user_id = ?", (text, user_id))
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.row("18", "19", "20", "21")
+            markup.row("22", "23", "24", "25")
+            bot.send_message(user_id, "Aapni Age (Umar) chunein ya type karein:", reply_markup=markup)
 
-    elif step == 'CITY':
-        user_states[user_id]['city'] = message.text
-        user_states[user_id]['step'] = 'BIO'
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-        markup.row("⏩ Skip Bio")
-        bot.send_message(user_id, "Write a short Bio about yourself (or click Skip):", reply_markup=markup)
+        elif step == 'AGE':
+            if not text.isdigit():
+                bot.send_message(user_id, "Kripya sahi umar numbers me daalein:")
+                conn.close()
+                return
+            c.execute("UPDATE user_states SET step = 'GENDER', age = ? WHERE user_id = ?", (int(text), user_id))
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.row("👨 Male (Purush)", "👩 Female (Mahila)")
+            bot.send_message(user_id, "Aapka Gender kya hai?", reply_markup=markup)
 
-    elif step == 'BIO':
-        bio = "" if message.text == "⏩ Skip Bio" else message.text
-        user_states[user_id]['bio'] = bio
-        user_states[user_id]['step'] = 'PHOTO'
-        bot.send_message(user_id, "Now send a Photo of yourself:", reply_markup=types.ReplyKeyboardRemove())
+        elif step == 'GENDER':
+            gender_text = "Male" if "Male" in text or "Purush" in text else "Female"
+            c.execute("UPDATE user_states SET step = 'CITY', gender = ? WHERE user_id = ?", (gender_text, user_id))
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.row("Mumbai", "Delhi", "Ahmedabad", "Rajkot")
+            markup.row("Bangalore", "Pune", "Surat", "Jaipur")
+            bot.send_message(user_id, "Aapka City (Shahar) chunein ya type karein:", reply_markup=markup)
+
+        elif step == 'CITY':
+            c.execute("UPDATE user_states SET step = 'BIO', city = ? WHERE user_id = ?", (text, user_id))
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+            markup.row("⏩ Skip Bio")
+            bot.send_message(user_id, "Apne baare me kuch likhein (Bio) ya Skip karein:", reply_markup=markup)
+
+        elif step == 'BIO':
+            bio = "" if "Skip" in text else text
+            c.execute("UPDATE user_states SET step = 'PHOTO', bio = ? WHERE user_id = ?", (bio, user_id))
+            bot.send_message(user_id, "Ab apni ek photo bhejein:", reply_markup=types.ReplyKeyboardRemove())
+        
+        conn.commit()
+        conn.close()
+        return
+
+    conn.close()
+
+    # --- MENU COMMANDS ---
+    if text in ["🔥 Match Dhoondo", "🔥 Find Match"]:
+        find_match(user_id)
+    elif text in ["💬 Instant Chat"]:
+        instant_chat(message)
+    elif text in ["👤 Meri Profile", "👤 My Profile"]:
+        my_profile(message)
+    elif text == "✏️ Edit Profile":
+        bot.send_message(user_id, "🔄 Profile Edit karne ke liye /reset dabayein aur apni details dobara bharein.")
+    elif text in ["🎁 Friends Invite Karo", "🎁 Invite & Earn VIP"]:
+        invite_earn(message)
+    elif text in ["⭐ Buy VIP Pass", "⭐ Buy Premium VIP (20 Stars)"]:
+        send_stars_invoice(message)
+    elif text in ["🚫 End Chat", "Chat Khatam Karein"]:
+        end_chat(message)
+    else:
+        bot.send_message(user_id, "Kripya menu se option chunein:", reply_markup=main_keyboard(user_id))
 
 # --- VIP STARS PAYMENT ---
-@bot.message_handler(func=lambda msg: msg.text in ["⭐ Buy Premium VIP", "⭐ Buy Premium VIP (20 Stars)"])
 def send_stars_invoice(message):
     prices = [types.LabeledPrice(label="VIP Membership (1 Month)", amount=20)]
     bot.send_invoice(
@@ -220,26 +278,22 @@ def process_successful_payment(message):
     c.execute("UPDATE users SET is_vip = 1, vip_expiry = ? WHERE user_id = ?", (expiry, user_id))
     conn.commit()
     conn.close()
-    bot.send_message(user_id, "🎉 Payment Successful! You are now a ⭐ VIP Member for 30 Days!", reply_markup=main_keyboard(user_id))
+    bot.send_message(user_id, "🎉 Payment Successful! Aap 30 Days ke liye ⭐ VIP Member ban gaye hain!", reply_markup=main_keyboard(user_id))
 
-# --- REFERRAL SYSTEM ---
-@bot.message_handler(func=lambda msg: msg.text == "🎁 Invite & Earn VIP")
+# REFERRAL SYSTEM
 def invite_earn(message):
     user_id = message.from_user.id
     bot_name = bot.get_me().username
     ref_link = f"https://t.me/{bot_name}?start=ref_{user_id}"
-    
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,))
     count = c.fetchone()[0]
     conn.close()
-
-    msg = f"🎁 **Invite & Earn Free VIP!**\n\nInvite 3 friends to get **1 Month Free VIP Pass**!\n\nYour Referral Count: **{count}/3**\nYour Referral Link:\n`{ref_link}`"
+    msg = f"🎁 **Invite & Earn Free VIP!**\n\n3 Dosto ko invite karke 1 Month Free VIP Pass paayein!\n\nAapka Referral Count: **{count}/3**\nLink:\n`{ref_link}`"
     bot.send_message(user_id, msg, parse_mode="Markdown")
 
-# --- MY PROFILE ---
-@bot.message_handler(func=lambda msg: msg.text == "👤 My Profile")
+# MY PROFILE
 def my_profile(message):
     user_id = message.from_user.id
     conn = sqlite3.connect('dating.db')
@@ -247,35 +301,27 @@ def my_profile(message):
     c.execute("SELECT name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users WHERE user_id = ?", (user_id,))
     user = c.fetchone()
     conn.close()
-
     if user:
         is_vip = check_vip_status(user_id)
         badge = "👑 [VIP MEMBER]" if is_vip == 1 else "🆓 [FREE USER]"
         v_badge = "🔵 Verified" if user[7] == 1 else ""
-        caption = f"{badge} {v_badge}\n\n👤 Name: {user[0]}, Age: {user[1]}\n📍 City: {user[3]}\nGender: {user[2]}\nBio: {user[4]}"
+        caption = f"{badge} {v_badge}\n\n👤 Name: {user[0]}, Age: {user[1]}\n📍 City: {user[3]}\nGender: {user[2]}\nBio: {user[4]}\n\n✏️ Profile badalne ke liye '✏️ Edit Profile' par click karein."
         bot.send_photo(user_id, user[5], caption=caption)
 
-# --- MATCHING SYSTEM ---
+# MATCHING SYSTEM
 def find_match(chat_id):
     is_vip = check_vip_status(chat_id)
-
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
-
     c.execute("SELECT COUNT(*) FROM swipes WHERE user_id = ?", (chat_id,))
     swipe_count = c.fetchone()[0]
 
     if not is_vip and swipe_count >= 20:
         conn.close()
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.row("⭐ Buy Premium VIP (20 Stars)")
-        markup.row("🎁 Invite & Earn VIP", "👤 My Profile")
-        bot.send_message(
-            chat_id, 
-            "⚠️ **Daily Profile Limit Reached!**\n\nAapne apne free 20 profiles dekh liye hain. VIP Membership kharidein ya 3 Dosto ko Invite karke Free VIP unlock karein! ⭐", 
-            reply_markup=markup,
-            parse_mode="Markdown"
-        )
+        markup.row("⭐ Buy VIP Pass")
+        markup.row("🎁 Friends Invite Karo", "👤 Meri Profile")
+        bot.send_message(chat_id, "⚠️ **Daily Limit Samapt!**\n\nAapne apne free 20 profiles dekh liye hain. Unlimited dekhne ke liye VIP lein.", reply_markup=markup, parse_mode="Markdown")
         return
 
     c.execute("SELECT city FROM users WHERE user_id = ?", (chat_id,))
@@ -285,16 +331,14 @@ def find_match(chat_id):
     c.execute("""
         SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
         WHERE user_id IN (SELECT user_id FROM swipes WHERE target_id = ? AND action = 'like')
-        AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
-        LIMIT 1
+        AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?) LIMIT 1
     """, (chat_id, chat_id))
     target = c.fetchone()
 
     if not target:
         c.execute("""
             SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
-            WHERE user_id != ? AND city = ?
-            AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
+            WHERE user_id != ? AND city = ? AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
             ORDER BY RANDOM() LIMIT 1
         """, (chat_id, user_city, chat_id))
         target = c.fetchone()
@@ -302,8 +346,7 @@ def find_match(chat_id):
     if not target:
         c.execute("""
             SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
-            WHERE user_id != ?
-            AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
+            WHERE user_id != ? AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
             ORDER BY RANDOM() LIMIT 1
         """, (chat_id, chat_id))
         target = c.fetchone()
@@ -327,10 +370,6 @@ def find_match(chat_id):
     markup.row(types.InlineKeyboardButton("🚩 Report", callback_data=f"report_{target_id}"))
     bot.send_photo(chat_id, photo_id, caption=caption, reply_markup=markup)
 
-@bot.message_handler(func=lambda msg: msg.text == "🔥 Find Match")
-def find_match_handler(message):
-    find_match(message.chat.id)
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith(("like_", "pass_", "report_")))
 def match_callbacks(call):
     user_id = call.from_user.id
@@ -348,7 +387,6 @@ def match_callbacks(call):
         return
 
     action = "like" if action_type == "like" else "pass"
-
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
     c.execute("INSERT OR REPLACE INTO swipes VALUES (?, ?, ?)", (user_id, target_id, action))
@@ -366,13 +404,13 @@ def match_callbacks(call):
             target_uname = target_info[1] if target_info and target_info[1] else None
 
             user_link = f"@{target_uname}" if target_uname else f"tg://user?id={target_id}"
-            bot.send_message(user_id, f"🎉 IT'S A MATCH!\n\nYou matched with {target_name}.\n💬 Start Chat: {user_link}")
+            bot.send_message(user_id, f"🎉 IT'S A MATCH!\n\nAapka match {target_name} ke saath ho gaya hai.\n💬 Start Chat: {user_link}")
 
             my_link = f"@{call.from_user.username}" if call.from_user.username else f"tg://user?id={user_id}"
-            bot.send_message(target_id, f"🎉 IT'S A MATCH!\n\nSomeone matched with you!\n💬 Start Chat: {my_link}")
+            bot.send_message(target_id, f"🎉 IT'S A MATCH!\n\nAapka naya match aaya hai!\n💬 Start Chat: {my_link}")
         else:
             try:
-                bot.send_message(target_id, "💖 Someone liked your profile! Click 'Find Match' to explore profiles.")
+                bot.send_message(target_id, "💖 Kisine aapki profile Like ki hai! Match dhoondhne ke liye '🔥 Match Dhoondo' par click karein.")
             except:
                 pass
     else:
@@ -381,54 +419,40 @@ def match_callbacks(call):
     conn.close()
     find_match(user_id)
 
-# --- INSTANT CHAT ---
-@bot.message_handler(func=lambda msg: msg.text == "💬 Instant Chat")
+# INSTANT CHAT
 def instant_chat(message):
     user_id = message.from_user.id
     if user_id in active_chats:
-        bot.send_message(user_id, "You are already in an active chat!")
+        bot.send_message(user_id, "Aap pehle se hi kisi se baat kar rahe hain!")
         return
 
     if waiting_queue and waiting_queue[0] != user_id:
         partner_id = waiting_queue.pop(0)
         active_chats[user_id] = partner_id
         active_chats[partner_id] = user_id
-
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("🚫 End Chat")
-
-        bot.send_message(user_id, "Connected with a real partner! Say hi 👋", reply_markup=markup)
-        bot.send_message(partner_id, "Connected with a real partner! Say hi 👋", reply_markup=markup)
+        markup.add("Chat Khatam Karein")
+        bot.send_message(user_id, "Partner mil gaya! Baatein shuru karein 👋", reply_markup=markup)
+        bot.send_message(partner_id, "Partner mil gaya! Baatein shuru karein 👋", reply_markup=markup)
     else:
         if user_id not in waiting_queue:
             waiting_queue.append(user_id)
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        markup.add("🚫 End Chat")
-        bot.send_message(user_id, "Searching for a partner... Please wait ⏳", reply_markup=markup)
+        markup.add("Chat Khatam Karein")
+        bot.send_message(user_id, "Partner dhoondha ja raha hai... Kripya thoda wait karein ⏳", reply_markup=markup)
 
-@bot.message_handler(func=lambda msg: msg.text == "🚫 End Chat")
 def end_chat(message):
     user_id = message.from_user.id
     if user_id in active_chats:
         partner_id = active_chats.pop(user_id)
         active_chats.pop(partner_id, None)
-        bot.send_message(partner_id, "Partner ended the chat.", reply_markup=main_keyboard(partner_id))
-        bot.send_message(user_id, "Chat ended successfully.", reply_markup=main_keyboard(user_id))
+        bot.send_message(partner_id, "Partner ne chat end kar di.", reply_markup=main_keyboard(partner_id))
+        bot.send_message(user_id, "Chat band ho gayi.", reply_markup=main_keyboard(user_id))
     elif user_id in waiting_queue:
         waiting_queue.remove(user_id)
-        bot.send_message(user_id, "Stopped searching.", reply_markup=main_keyboard(user_id))
+        bot.send_message(user_id, "Searching band kar di.", reply_markup=main_keyboard(user_id))
     else:
-        bot.send_message(user_id, "You are not in any chat.", reply_markup=main_keyboard(user_id))
-
-@bot.message_handler(func=lambda msg: msg.from_user.id in active_chats)
-def relay_message(message):
-    user_id = message.from_user.id
-    partner_id = active_chats[user_id]
-
-    if message.text:
-        bot.send_message(partner_id, message.text)
-    elif message.photo:
-        bot.send_photo(partner_id, message.photo[-1].file_id, caption=message.caption)
+        bot.send_message(user_id, "Aap kisi active chat me nahi hain.", reply_markup=main_keyboard(user_id))
 
 bot.infinity_polling()
 
