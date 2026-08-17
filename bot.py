@@ -1,15 +1,14 @@
 import telebot
 from telebot import types
 import sqlite3
-import requests
 
-# ⚠️ YAHAN APNA ORIGINAL BOT TOKEN DAALO
+# ⚠️ YAHAN APNA TELEGRAM BOT TOKEN DAALO
 API_TOKEN = '8505897253:AAGliSrXAa2nh-TzIEMdAm8sR2UcWnbt1dI'
 bot = telebot.TeleBot(API_TOKEN)
 
 ADMIN_ID = 8310681464  # Aapki Admin User ID
 
-# --- DATABASE SETUP WITH DEMO PROFILES ---
+# --- DATABASE SETUP WITH 10 DEMO PROFILES ---
 def init_db():
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
@@ -27,7 +26,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS swipes 
                  (user_id INTEGER, target_id INTEGER, action TEXT, UNIQUE(user_id, target_id))''')
 
-    # Fake Female Profiles for instant user engagement
+    # 10 Fake/Demo Female Profiles (Ye tabhi dikhengi jab Real profiles na bachi ho)
     fake_users = [
         (9991, 'Ananya', 21, 'Female', 'Coffee lover & books ☕📚', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'ananya_demo', 0),
         (9992, 'Riya', 20, 'Female', 'Music, travel & good vibes ✨', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'riya_demo', 0),
@@ -35,7 +34,10 @@ def init_db():
         (9994, 'Sneha', 19, 'Female', 'College student | Loves photography 📸', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'sneha_demo', 0),
         (9995, 'Kavya', 23, 'Female', 'Baking & Movies 🎬', 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=500', 'kavya_demo', 0),
         (9996, 'Pooja', 21, 'Female', 'Dancing & Fitness enthusiast 💪', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'pooja_demo', 0),
-        (9997, 'Simran', 20, 'Female', 'Late night talks & long drives 🌙', 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=500', 'simran_demo', 0)
+        (9997, 'Simran', 20, 'Female', 'Late night talks & long drives 🌙', 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=500', 'simran_demo', 0),
+        (9998, 'Isha', 22, 'Female', 'Exploring new cafes & fashion enthusiast 👗', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'isha_demo', 0),
+        (9999, 'Tanya', 21, 'Female', 'Art, painting & slow music 🎨🎧', 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500', 'tanya_demo', 0),
+        (10000, 'Neha', 20, 'Female', 'Dog lover 🐶 | Tech & Web 💻', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'neha_demo', 0)
     ]
 
     for u in fake_users:
@@ -45,24 +47,6 @@ def init_db():
     conn.close()
 
 init_db()
-
-# AI Response Generator
-def get_ai_female_response(user_text):
-    system_instruction = (
-        "You are Ananya, a 21-year-old girl chatting on an anonymous dating bot. "
-        "Reply naturally in the exact same language used by the user (Hinglish, Hindi, English, etc.). "
-        "Keep your replies short (1-2 sentences max), use realistic emojis, sound cute, friendly, and human. "
-        "Never mention that you are an AI, bot, or virtual assistant."
-    )
-    try:
-        url = "https://text.pollinations.ai/"
-        payload = f"{system_instruction}\n\nUser: {user_text}\nAnanya:"
-        response = requests.get(f"{url}{requests.utils.quote(payload)}", timeout=10)
-        if response.status_code == 200:
-            return response.text.strip()
-    except Exception:
-        pass
-    return "Heyy! Sorry thoda network issue tha 😅 Aur batao kya chal raha hai?"
 
 user_states = {}
 active_chats = {}
@@ -195,12 +179,34 @@ def my_profile(message):
     else:
         bot.send_message(user_id, "Type /start to set up your profile.")
 
-# --- SMART MATCHING SYSTEM ---
+# --- SMART MATCHING SYSTEM (PRIORITIZES REAL USERS & 20 SWIPE LIMIT) ---
 def find_match(chat_id):
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
 
-    # Prioritize profiles that liked the current user
+    # 1. VIP Check & Swipe Count Check (Limit set to 20 profiles)
+    c.execute("SELECT is_vip FROM users WHERE user_id = ?", (chat_id,))
+    user_res = c.fetchone()
+    is_vip = user_res[0] if user_res else 0
+
+    c.execute("SELECT COUNT(*) FROM swipes WHERE user_id = ?", (chat_id,))
+    swipe_count = c.fetchone()[0]
+
+    # Free users limit check: Stop after 20 swipes
+    if not is_vip and swipe_count >= 20:
+        conn.close()
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.row("⭐ Buy Premium VIP (20 Stars)")
+        markup.row("👤 My Profile", "💬 Instant Chat")
+        bot.send_message(
+            chat_id, 
+            "⚠️ **Daily Profile Limit Reached!**\n\nAapne apne free 20 profiles dekh liye hain. VIP Membership kharidein aur Unlimited profiles swipe karein! ⭐", 
+            reply_markup=markup,
+            parse_mode="Markdown"
+        )
+        return
+
+    # 2. Priority A: Profiles that liked the current user
     c.execute("""
         SELECT user_id, name, age, gender, bio, photo_id, username, is_vip FROM users 
         WHERE user_id IN (SELECT user_id FROM swipes WHERE target_id = ? AND action = 'like')
@@ -209,10 +215,23 @@ def find_match(chat_id):
     """, (chat_id, chat_id))
     target = c.fetchone()
 
+    # 3. Priority B: Real users (non-dummy profiles, user_id < 9990)
     if not target:
         c.execute("""
             SELECT user_id, name, age, gender, bio, photo_id, username, is_vip FROM users 
             WHERE user_id != ? 
+            AND user_id < 9990
+            AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
+            ORDER BY RANDOM() LIMIT 1
+        """, (chat_id, chat_id))
+        target = c.fetchone()
+
+    # 4. Priority C: Dummy profiles (only if no new real profiles exist)
+    if not target:
+        c.execute("""
+            SELECT user_id, name, age, gender, bio, photo_id, username, is_vip FROM users 
+            WHERE user_id != ? 
+            AND user_id >= 9990
             AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
             ORDER BY RANDOM() LIMIT 1
         """, (chat_id, chat_id))
@@ -282,7 +301,7 @@ def match_callbacks(call):
     conn.close()
     find_match(user_id)
 
-# --- INSTANT CHAT WITH AI FALLBACK ---
+# --- REAL USER INSTANT CHAT ---
 @bot.message_handler(func=lambda msg: msg.text == "💬 Instant Chat")
 def instant_chat(message):
     user_id = message.from_user.id
@@ -301,39 +320,30 @@ def instant_chat(message):
         bot.send_message(user_id, "Connected with a real partner! Say hi 👋", reply_markup=markup)
         bot.send_message(partner_id, "Connected with a real partner! Say hi 👋", reply_markup=markup)
     else:
-        active_chats[user_id] = "AI_FEMALE"
+        if user_id not in waiting_queue:
+            waiting_queue.append(user_id)
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("🚫 End Chat")
-        bot.send_message(user_id, "Connected with a partner! 💖\n\n(Say Hi to start chatting)", reply_markup=markup)
+        bot.send_message(user_id, "Searching for a partner... Please wait ⏳", reply_markup=markup)
 
 @bot.message_handler(func=lambda msg: msg.text == "🚫 End Chat")
 def end_chat(message):
     user_id = message.from_user.id
     if user_id in active_chats:
         partner_id = active_chats.pop(user_id)
-        if partner_id != "AI_FEMALE":
-            active_chats.pop(partner_id, None)
-            bot.send_message(partner_id, "Partner ended the chat.", reply_markup=main_keyboard(partner_id))
+        active_chats.pop(partner_id, None)
+        bot.send_message(partner_id, "Partner ended the chat.", reply_markup=main_keyboard(partner_id))
         bot.send_message(user_id, "Chat ended successfully.", reply_markup=main_keyboard(user_id))
     elif user_id in waiting_queue:
         waiting_queue.remove(user_id)
         bot.send_message(user_id, "Stopped searching.", reply_markup=main_keyboard(user_id))
     else:
-        bot.send_message(user_id, "You are not in any chat.")
+        bot.send_message(user_id, "You are not in any chat.", reply_markup=main_keyboard(user_id))
 
 @bot.message_handler(func=lambda msg: msg.from_user.id in active_chats)
 def relay_message(message):
     user_id = message.from_user.id
     partner_id = active_chats[user_id]
-
-    if partner_id == "AI_FEMALE":
-        if message.text:
-            bot.send_chat_action(user_id, 'typing')
-            ai_reply = get_ai_female_response(message.text)
-            bot.send_message(user_id, ai_reply)
-        else:
-            bot.send_message(user_id, "Awww pretty photo! 😍")
-        return
 
     if message.text:
         bot.send_message(partner_id, message.text)
@@ -341,4 +351,4 @@ def relay_message(message):
         bot.send_photo(partner_id, message.photo[-1].file_id, caption=message.caption)
 
 bot.infinity_polling()
-	
+
