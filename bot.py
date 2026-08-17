@@ -1,6 +1,7 @@
 import telebot
 from telebot import types
 import sqlite3
+import datetime
 
 # ⚠️ YAHAN APNA TELEGRAM BOT TOKEN DAALO
 API_TOKEN = '8505897253:AAGliSrXAa2nh-TzIEMdAm8sR2UcWnbt1dI'
@@ -8,40 +9,39 @@ bot = telebot.TeleBot(API_TOKEN)
 
 ADMIN_ID = 8310681464  # Aapki Admin User ID
 
-# --- DATABASE SETUP WITH 10 DEMO PROFILES ---
+# --- DATABASE SETUP ---
 def init_db():
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
-                 (user_id INTEGER PRIMARY KEY, name TEXT, age INTEGER, gender TEXT, bio TEXT, photo_id TEXT, username TEXT, is_vip INTEGER DEFAULT 0)''')
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN username TEXT")
-    except:
-        pass
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN is_vip INTEGER DEFAULT 0")
-    except:
-        pass
+                 (user_id INTEGER PRIMARY KEY, name TEXT, age INTEGER, gender TEXT, city TEXT, bio TEXT, photo_id TEXT, username TEXT, is_vip INTEGER DEFAULT 0, vip_expiry TEXT, referrer_id INTEGER, is_verified INTEGER DEFAULT 0)''')
+    
+    # Auto Column migration safety
+    for col in [("city", "TEXT"), ("vip_expiry", "TEXT"), ("referrer_id", "INTEGER"), ("is_verified", "INTEGER DEFAULT 0")]:
+        try:
+            c.execute(f"ALTER TABLE users ADD COLUMN {col[0]} {col[1]}")
+        except:
+            pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS swipes 
                  (user_id INTEGER, target_id INTEGER, action TEXT, UNIQUE(user_id, target_id))''')
 
-    # 10 Fake/Demo Female Profiles (Ye tabhi dikhengi jab Real profiles na bachi ho)
+    # 10 Fake/Demo Female Profiles (Backup matching)
     fake_users = [
-        (9991, 'Ananya', 21, 'Female', 'Coffee lover & books ☕📚', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'ananya_demo', 0),
-        (9992, 'Riya', 20, 'Female', 'Music, travel & good vibes ✨', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'riya_demo', 0),
-        (9993, 'Priya', 22, 'Female', 'Foodie | Looking for meaningful chat 🍕', 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500', 'priya_demo', 0),
-        (9994, 'Sneha', 19, 'Female', 'College student | Loves photography 📸', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'sneha_demo', 0),
-        (9995, 'Kavya', 23, 'Female', 'Baking & Movies 🎬', 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=500', 'kavya_demo', 0),
-        (9996, 'Pooja', 21, 'Female', 'Dancing & Fitness enthusiast 💪', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'pooja_demo', 0),
-        (9997, 'Simran', 20, 'Female', 'Late night talks & long drives 🌙', 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=500', 'simran_demo', 0),
-        (9998, 'Isha', 22, 'Female', 'Exploring new cafes & fashion enthusiast 👗', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'isha_demo', 0),
-        (9999, 'Tanya', 21, 'Female', 'Art, painting & slow music 🎨🎧', 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500', 'tanya_demo', 0),
-        (10000, 'Neha', 20, 'Female', 'Dog lover 🐶 | Tech & Web 💻', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'neha_demo', 0)
+        (9991, 'Ananya', 21, 'Female', 'Mumbai', 'Coffee lover & books ☕📚', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'ananya_demo', 0),
+        (9992, 'Riya', 20, 'Female', 'Delhi', 'Music, travel & good vibes ✨', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'riya_demo', 0),
+        (9993, 'Priya', 22, 'Female', 'Ahmedabad', 'Foodie | Looking for meaningful chat 🍕', 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500', 'priya_demo', 0),
+        (9994, 'Sneha', 19, 'Female', 'Rajkot', 'College student | Loves photography 📸', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'sneha_demo', 0),
+        (9995, 'Kavya', 23, 'Female', 'Bangalore', 'Baking & Movies 🎬', 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=500', 'kavya_demo', 0),
+        (9996, 'Pooja', 21, 'Female', 'Pune', 'Dancing & Fitness enthusiast 💪', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'pooja_demo', 0),
+        (9997, 'Simran', 20, 'Female', 'Surat', 'Late night talks & long drives 🌙', 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=500', 'simran_demo', 0),
+        (9998, 'Isha', 22, 'Female', 'Jaipur', 'Exploring new cafes 👗', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'isha_demo', 0),
+        (9999, 'Tanya', 21, 'Female', 'Lucknow', 'Art, painting & slow music 🎨🎧', 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500', 'tanya_demo', 0),
+        (10000, 'Neha', 20, 'Female', 'Indore', 'Dog lover 🐶 | Tech & Web 💻', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'neha_demo', 0)
     ]
 
     for u in fake_users:
-        c.execute("INSERT OR IGNORE INTO users (user_id, name, age, gender, bio, photo_id, username, is_vip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", u)
+        c.execute("INSERT OR IGNORE INTO users (user_id, name, age, gender, city, bio, photo_id, username, is_vip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", u)
 
     conn.commit()
     conn.close()
@@ -52,26 +52,41 @@ user_states = {}
 active_chats = {}
 waiting_queue = []
 
-def main_keyboard(user_id):
+# --- HELPER FUNCTIONS ---
+def check_vip_status(user_id):
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
-    c.execute("SELECT is_vip FROM users WHERE user_id = ?", (user_id,))
+    c.execute("SELECT is_vip, vip_expiry FROM users WHERE user_id = ?", (user_id,))
     res = c.fetchone()
+    if res and res[0] == 1:
+        if res[1]:
+            expiry_date = datetime.datetime.strptime(res[1], "%Y-%m-%d")
+            if datetime.datetime.now() > expiry_date:
+                c.execute("UPDATE users SET is_vip = 0 WHERE user_id = ?", (user_id,))
+                conn.commit()
+                conn.close()
+                return 0
+        conn.close()
+        return 1
     conn.close()
-    
-    is_vip = res[0] if res else 0
+    return 0
 
+def main_keyboard(user_id):
+    is_vip = check_vip_status(user_id)
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.row("🔥 Find Match", "💬 Instant Chat")
-    markup.row("👤 My Profile", "✏️ Edit Profile")
+    markup.row("👤 My Profile", "🎁 Invite & Earn VIP")
     if not is_vip:
         markup.row("⭐ Buy Premium VIP (20 Stars)")
     return markup
 
-# --- REGISTRATION ---
+# --- REGISTRATION FLOW WITH BUTTONS & SKIP ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
+    args = message.text.split()
+    referrer = int(args[1].replace('ref_', '')) if len(args) > 1 and args[1].startswith('ref_') else None
+
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
     c.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
@@ -81,8 +96,8 @@ def start_cmd(message):
     if user:
         bot.send_message(user_id, "Welcome back! Choose an option:", reply_markup=main_keyboard(user_id))
     else:
-        user_states[user_id] = {'step': 'NAME'}
-        bot.send_message(user_id, "Welcome to Dating Bot! 🎉\n\nWhat is your Name?")
+        user_states[user_id] = {'step': 'NAME', 'referrer': referrer}
+        bot.send_message(user_id, "Welcome to Dating Bot! 🎉\n\nWhat is your Name?", reply_markup=types.ReplyKeyboardRemove())
 
 @bot.message_handler(func=lambda msg: msg.from_user.id in user_states)
 def registration_flow(message):
@@ -92,22 +107,42 @@ def registration_flow(message):
     if step == 'NAME':
         user_states[user_id]['name'] = message.text
         user_states[user_id]['step'] = 'AGE'
-        bot.send_message(user_id, "Enter your Age (in numbers):")
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("18", "19", "20", "21")
+        markup.row("22", "23", "24", "25")
+        bot.send_message(user_id, "Select or Type your Age:", reply_markup=markup)
+
     elif step == 'AGE':
         if not message.text.isdigit():
-            bot.send_message(user_id, "Please enter a valid number:")
+            bot.send_message(user_id, "Please select or enter a valid age in numbers:")
             return
         user_states[user_id]['age'] = int(message.text)
         user_states[user_id]['step'] = 'GENDER'
-        bot.send_message(user_id, "Enter your Gender (e.g., Male / Female):")
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("👨 Male", "👩 Female")
+        bot.send_message(user_id, "Select your Gender:", reply_markup=markup)
+
     elif step == 'GENDER':
-        user_states[user_id]['gender'] = message.text
+        gender_text = "Male" if "Male" in message.text else "Female"
+        user_states[user_id]['gender'] = gender_text
+        user_states[user_id]['step'] = 'CITY'
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("Mumbai", "Delhi", "Ahmedabad", "Rajkot")
+        markup.row("Bangalore", "Pune", "Surat", "Jaipur")
+        bot.send_message(user_id, "Select or type your City:", reply_markup=markup)
+
+    elif step == 'CITY':
+        user_states[user_id]['city'] = message.text
         user_states[user_id]['step'] = 'BIO'
-        bot.send_message(user_id, "Write a short Bio about yourself:")
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+        markup.row("⏩ Skip Bio")
+        bot.send_message(user_id, "Write a short Bio about yourself (or click Skip):", reply_markup=markup)
+
     elif step == 'BIO':
-        user_states[user_id]['bio'] = message.text
+        bio = "" if message.text == "⏩ Skip Bio" else message.text
+        user_states[user_id]['bio'] = bio
         user_states[user_id]['step'] = 'PHOTO'
-        bot.send_message(user_id, "Now send a Photo of yourself:")
+        bot.send_message(user_id, "Now send a Photo of yourself:", reply_markup=types.ReplyKeyboardRemove())
 
 @bot.message_handler(content_types=['photo'], func=lambda msg: msg.from_user.id in user_states and user_states[msg.from_user.id].get('step') == 'PHOTO')
 def get_photo(message):
@@ -119,23 +154,37 @@ def get_photo(message):
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
     c.execute("""
-        INSERT OR REPLACE INTO users (user_id, name, age, gender, bio, photo_id, username, is_vip)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-    """, (user_id, data['name'], data['age'], data['gender'], data['bio'], photo_id, username))
+        INSERT OR REPLACE INTO users (user_id, name, age, gender, city, bio, photo_id, username, is_vip, referrer_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+    """, (user_id, data['name'], data['age'], data['gender'], data['city'], data['bio'], photo_id, username, data.get('referrer')))
+    
+    # Referral Award check
+    if data.get('referrer'):
+        ref_id = data['referrer']
+        c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (ref_id,))
+        ref_count = c.fetchone()[0]
+        if ref_count >= 3:
+            expiry = (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+            c.execute("UPDATE users SET is_vip = 1, vip_expiry = ? WHERE user_id = ?", (expiry, ref_id))
+            try:
+                bot.send_message(ref_id, "🎉 Congratulations! You referred 3 friends and unlocked 1 Month FREE VIP Pass! ⭐")
+            except:
+                pass
+
     conn.commit()
     conn.close()
 
     del user_states[user_id]
     bot.send_message(user_id, "Profile created successfully! 🎉", reply_markup=main_keyboard(user_id))
 
-# --- TELEGRAM STARS PAYMENT ---
+# --- TELEGRAM STARS VIP PAYMENT (MONTHLY 20 STARS) ---
 @bot.message_handler(func=lambda msg: msg.text in ["⭐ Buy Premium VIP", "⭐ Buy Premium VIP (20 Stars)"])
 def send_stars_invoice(message):
     prices = [types.LabeledPrice(label="VIP Membership (1 Month)", amount=20)]
     bot.send_invoice(
         message.chat.id,
-        title="⭐ VIP Premium Pass",
-        description="Unlock VIP Crown Badge, Unlimited Swiping, and Direct Matches Access!",
+        title="⭐ VIP Premium Pass (1 Month)",
+        description="Unlimited Swiping, Priority Matching & VIP Crown Badge for 30 Days!",
         invoice_payload="vip_subscription_payload",
         provider_token="",
         currency="XTR",
@@ -150,88 +199,109 @@ def process_pre_checkout(pre_checkout_query):
 @bot.message_handler(content_types=['successful_payment'])
 def process_successful_payment(message):
     user_id = message.from_user.id
+    expiry = (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
-    c.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (user_id,))
+    c.execute("UPDATE users SET is_vip = 1, vip_expiry = ? WHERE user_id = ?", (expiry, user_id))
     conn.commit()
     conn.close()
-    bot.send_message(user_id, "🎉 Payment Successful! You are now a ⭐ VIP Member!", reply_markup=main_keyboard(user_id))
+    bot.send_message(user_id, "🎉 Payment Successful! You are now a ⭐ VIP Member for 30 Days!", reply_markup=main_keyboard(user_id))
 
-# --- MY PROFILE ---
-@bot.message_handler(func=lambda msg: msg.text in ["👤 My Profile", "✏️ Edit Profile"])
-def my_profile(message):
+# --- REFERRAL SYSTEM ---
+@bot.message_handler(func=lambda msg: msg.text == "🎁 Invite & Earn VIP")
+def invite_earn(message):
     user_id = message.from_user.id
-    if message.text == "✏️ Edit Profile":
-        user_states[user_id] = {'step': 'NAME'}
-        bot.send_message(user_id, "Let's update your profile!\nEnter your Name:")
-        return
-
+    bot_name = bot.get_me().username
+    ref_link = f"https://t.me/{bot_name}?start=ref_{user_id}"
+    
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
-    c.execute("SELECT name, age, gender, bio, photo_id, is_vip FROM users WHERE user_id = ?", (user_id,))
+    c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (user_id,))
+    count = c.fetchone()[0]
+    conn.close()
+
+    msg = f"🎁 **Invite & Earn Free VIP!**\n\nInvite 3 friends to get **1 Month Free VIP Pass**!\n\nYour Referral Count: **{count}/3**\nYour Referral Link:\n`{ref_link}`"
+    bot.send_message(user_id, msg, parse_mode="Markdown")
+
+# --- MY PROFILE ---
+@bot.message_handler(func=lambda msg: msg.text == "👤 My Profile")
+def my_profile(message):
+    user_id = message.from_user.id
+    conn = sqlite3.connect('dating.db')
+    c = conn.cursor()
+    c.execute("SELECT name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users WHERE user_id = ?", (user_id,))
     user = c.fetchone()
     conn.close()
 
     if user:
-        badge = "👑 [VIP MEMBER]" if user[5] == 1 else "🆓 [FREE USER]"
-        caption = f"{badge}\n\n👤 Name: {user[0]}, Age: {user[1]}\nGender: {user[2]}\nBio: {user[3]}"
-        bot.send_photo(user_id, user[4], caption=caption)
-    else:
-        bot.send_message(user_id, "Type /start to set up your profile.")
+        is_vip = check_vip_status(user_id)
+        badge = "👑 [VIP MEMBER]" if is_vip == 1 else "🆓 [FREE USER]"
+        v_badge = "🔵 Verified" if user[7] == 1 else ""
+        caption = f"{badge} {v_badge}\n\n👤 Name: {user[0]}, Age: {user[1]}\n📍 City: {user[3]}\nGender: {user[2]}\nBio: {user[4]}"
+        bot.send_photo(user_id, user[5], caption=caption)
 
-# --- SMART MATCHING SYSTEM (PRIORITIZES REAL USERS & 20 SWIPE LIMIT) ---
+# --- MATCHING SYSTEM (REAL PRIORITY, CITY FILTER & 20 LIMIT) ---
 def find_match(chat_id):
+    is_vip = check_vip_status(chat_id)
+
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
-
-    # 1. VIP Check & Swipe Count Check (Limit set to 20 profiles)
-    c.execute("SELECT is_vip FROM users WHERE user_id = ?", (chat_id,))
-    user_res = c.fetchone()
-    is_vip = user_res[0] if user_res else 0
 
     c.execute("SELECT COUNT(*) FROM swipes WHERE user_id = ?", (chat_id,))
     swipe_count = c.fetchone()[0]
 
-    # Free users limit check: Stop after 20 swipes
+    # Free User Limit (20 Profile Limit)
     if not is_vip and swipe_count >= 20:
         conn.close()
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.row("⭐ Buy Premium VIP (20 Stars)")
-        markup.row("👤 My Profile", "💬 Instant Chat")
+        markup.row("🎁 Invite & Earn VIP", "👤 My Profile")
         bot.send_message(
             chat_id, 
-            "⚠️ **Daily Profile Limit Reached!**\n\nAapne apne free 20 profiles dekh liye hain. VIP Membership kharidein aur Unlimited profiles swipe karein! ⭐", 
+            "⚠️ **Daily Profile Limit Reached!**\n\nAapne apne free 20 profiles dekh liye hain. Premium VIP kharidein ya 3 Dosto ko Invite karke Free VIP unlock karein! ⭐", 
             reply_markup=markup,
             parse_mode="Markdown"
         )
         return
 
-    # 2. Priority A: Profiles that liked the current user
+    c.execute("SELECT city FROM users WHERE user_id = ?", (chat_id,))
+    u_city = c.fetchone()
+    user_city = u_city[0] if u_city else ""
+
+    # Priority 1: Profiles that Liked this user
     c.execute("""
-        SELECT user_id, name, age, gender, bio, photo_id, username, is_vip FROM users 
+        SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
         WHERE user_id IN (SELECT user_id FROM swipes WHERE target_id = ? AND action = 'like')
         AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
         LIMIT 1
     """, (chat_id, chat_id))
     target = c.fetchone()
 
-    # 3. Priority B: Real users (non-dummy profiles, user_id < 9990)
+    # Priority 2: Real Users in Same City
     if not target:
         c.execute("""
-            SELECT user_id, name, age, gender, bio, photo_id, username, is_vip FROM users 
-            WHERE user_id != ? 
-            AND user_id < 9990
+            SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
+            WHERE user_id != ? AND user_id < 9990 AND city = ?
+            AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
+            ORDER BY RANDOM() LIMIT 1
+        """, (chat_id, user_city, chat_id))
+        target = c.fetchone()
+
+    # Priority 3: Real Users Anywhere
+    if not target:
+        c.execute("""
+            SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
+            WHERE user_id != ? AND user_id < 9990
             AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
             ORDER BY RANDOM() LIMIT 1
         """, (chat_id, chat_id))
         target = c.fetchone()
 
-    # 4. Priority C: Dummy profiles (only if no new real profiles exist)
+    # Priority 4: Backup Demo Profiles
     if not target:
         c.execute("""
-            SELECT user_id, name, age, gender, bio, photo_id, username, is_vip FROM users 
-            WHERE user_id != ? 
-            AND user_id >= 9990
+            SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
+            WHERE user_id != ? AND user_id >= 9990
             AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
             ORDER BY RANDOM() LIMIT 1
         """, (chat_id, chat_id))
@@ -243,22 +313,24 @@ def find_match(chat_id):
         bot.send_message(chat_id, "No more new profiles right now! Check back later.")
         return
 
-    target_id, name, age, gender, bio, photo_id, username, is_vip = target
-    badge = "👑 VIP User" if is_vip == 1 else ""
-    caption = f"🔥 Profile Card {badge}\n\nName: {name}, Age: {age}\nGender: {gender}\nBio: {bio}"
+    target_id, name, age, gender, city, bio, photo_id, is_vip_target, is_verified = target
+    badge = "👑 VIP User" if is_vip_target == 1 else ""
+    v_badge = "🔵 Verified" if is_verified == 1 else ""
+    caption = f"🔥 Profile Card {badge} {v_badge}\n\nName: {name}, Age: {age}\n📍 City: {city}\nGender: {gender}\nBio: {bio}"
     
     markup = types.InlineKeyboardMarkup()
     markup.row(
         types.InlineKeyboardButton("Like ❤️", callback_data=f"like_{target_id}"),
         types.InlineKeyboardButton("Pass ❌", callback_data=f"pass_{target_id}")
     )
+    markup.row(types.InlineKeyboardButton("🚩 Report", callback_data=f"report_{target_id}"))
     bot.send_photo(chat_id, photo_id, caption=caption, reply_markup=markup)
 
 @bot.message_handler(func=lambda msg: msg.text == "🔥 Find Match")
 def find_match_handler(message):
     find_match(message.chat.id)
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith(("like_", "pass_")))
+@bot.callback_query_handler(func=lambda call: call.data.startswith(("like_", "pass_", "report_")))
 def match_callbacks(call):
     user_id = call.from_user.id
     try:
@@ -266,8 +338,15 @@ def match_callbacks(call):
     except:
         pass
 
+    action_type = call.data.split("_")[0]
     target_id = int(call.data.split("_")[1])
-    action = "like" if call.data.startswith("like_") else "pass"
+
+    if action_type == "report":
+        bot.answer_callback_query(call.id, "Report submitted. Thank you!")
+        find_match(user_id)
+        return
+
+    action = "like" if action_type == "like" else "pass"
 
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
@@ -301,7 +380,7 @@ def match_callbacks(call):
     conn.close()
     find_match(user_id)
 
-# --- REAL USER INSTANT CHAT ---
+# --- REAL INSTANT CHAT ---
 @bot.message_handler(func=lambda msg: msg.text == "💬 Instant Chat")
 def instant_chat(message):
     user_id = message.from_user.id
@@ -350,5 +429,25 @@ def relay_message(message):
     elif message.photo:
         bot.send_photo(partner_id, message.photo[-1].file_id, caption=message.caption)
 
-bot.infinity_polling()
+# --- ADMIN PANEL ---
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    conn = sqlite3.connect('dating.db')
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users WHERE user_id < 9990")
+    total_users = c.fetchone()[0]
+    c.execute("SELECT COUNT(*) FROM users WHERE is_vip = 1")
+    vips = c.fetchone()[0]
+    conn.close()
 
+    bot.send_message(ADMIN_ID, f"📊 **Admin Control Panel**\n\nTotal Real Users: {total_users}\nActive VIP Members: {vips}\n\nBroadcast text: `/broadcast Your message here`", parse_mode="Markdown")
+
+@bot.message_handler(commands=['broadcast'])
+def broadcast_msg(message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    text = message.text.replace('/broadcast ', '')
+    if not text:
+ 
