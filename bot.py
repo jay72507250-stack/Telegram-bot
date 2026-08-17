@@ -9,14 +9,13 @@ bot = telebot.TeleBot(API_TOKEN)
 
 ADMIN_ID = 8310681464  # Aapki Admin User ID
 
-# --- DATABASE SETUP ---
+# --- DATABASE SETUP (NO DUMMY PROFILES) ---
 def init_db():
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (user_id INTEGER PRIMARY KEY, name TEXT, age INTEGER, gender TEXT, city TEXT, bio TEXT, photo_id TEXT, username TEXT, is_vip INTEGER DEFAULT 0, vip_expiry TEXT, referrer_id INTEGER, is_verified INTEGER DEFAULT 0)''')
     
-    # Auto Column migration safety
     for col in [("city", "TEXT"), ("vip_expiry", "TEXT"), ("referrer_id", "INTEGER"), ("is_verified", "INTEGER DEFAULT 0")]:
         try:
             c.execute(f"ALTER TABLE users ADD COLUMN {col[0]} {col[1]}")
@@ -26,22 +25,8 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS swipes 
                  (user_id INTEGER, target_id INTEGER, action TEXT, UNIQUE(user_id, target_id))''')
 
-    # 10 Fake/Demo Female Profiles (Backup matching)
-    fake_users = [
-        (9991, 'Ananya', 21, 'Female', 'Mumbai', 'Coffee lover & books ☕📚', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'ananya_demo', 0),
-        (9992, 'Riya', 20, 'Female', 'Delhi', 'Music, travel & good vibes ✨', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'riya_demo', 0),
-        (9993, 'Priya', 22, 'Female', 'Ahmedabad', 'Foodie | Looking for meaningful chat 🍕', 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500', 'priya_demo', 0),
-        (9994, 'Sneha', 19, 'Female', 'Rajkot', 'College student | Loves photography 📸', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'sneha_demo', 0),
-        (9995, 'Kavya', 23, 'Female', 'Bangalore', 'Baking & Movies 🎬', 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=500', 'kavya_demo', 0),
-        (9996, 'Pooja', 21, 'Female', 'Pune', 'Dancing & Fitness enthusiast 💪', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'pooja_demo', 0),
-        (9997, 'Simran', 20, 'Female', 'Surat', 'Late night talks & long drives 🌙', 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=500', 'simran_demo', 0),
-        (9998, 'Isha', 22, 'Female', 'Jaipur', 'Exploring new cafes 👗', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'isha_demo', 0),
-        (9999, 'Tanya', 21, 'Female', 'Lucknow', 'Art, painting & slow music 🎨🎧', 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500', 'tanya_demo', 0),
-        (10000, 'Neha', 20, 'Female', 'Indore', 'Dog lover 🐶 | Tech & Web 💻', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'neha_demo', 0)
-    ]
-
-    for u in fake_users:
-        c.execute("INSERT OR IGNORE INTO users (user_id, name, age, gender, city, bio, photo_id, username, is_vip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", u)
+    # Delete existing fake profiles if any
+    c.execute("DELETE FROM users WHERE user_id >= 9990")
 
     conn.commit()
     conn.close()
@@ -60,12 +45,15 @@ def check_vip_status(user_id):
     res = c.fetchone()
     if res and res[0] == 1:
         if res[1]:
-            expiry_date = datetime.datetime.strptime(res[1], "%Y-%m-%d")
-            if datetime.datetime.now() > expiry_date:
-                c.execute("UPDATE users SET is_vip = 0 WHERE user_id = ?", (user_id,))
-                conn.commit()
-                conn.close()
-                return 0
+            try:
+                expiry_date = datetime.datetime.strptime(res[1], "%Y-%m-%d")
+                if datetime.datetime.now() > expiry_date:
+                    c.execute("UPDATE users SET is_vip = 0 WHERE user_id = ?", (user_id,))
+                    conn.commit()
+                    conn.close()
+                    return 0
+            except:
+                pass
         conn.close()
         return 1
     conn.close()
@@ -80,7 +68,7 @@ def main_keyboard(user_id):
         markup.row("⭐ Buy Premium VIP (20 Stars)")
     return markup
 
-# --- REGISTRATION FLOW WITH BUTTONS & SKIP ---
+# --- REGISTRATION FLOW ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
@@ -158,7 +146,6 @@ def get_photo(message):
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
     """, (user_id, data['name'], data['age'], data['gender'], data['city'], data['bio'], photo_id, username, data.get('referrer')))
     
-    # Referral Award check
     if data.get('referrer'):
         ref_id = data['referrer']
         c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (ref_id,))
@@ -177,14 +164,14 @@ def get_photo(message):
     del user_states[user_id]
     bot.send_message(user_id, "Profile created successfully! 🎉", reply_markup=main_keyboard(user_id))
 
-# --- TELEGRAM STARS VIP PAYMENT (MONTHLY 20 STARS) ---
+# --- VIP STARS PAYMENT ---
 @bot.message_handler(func=lambda msg: msg.text in ["⭐ Buy Premium VIP", "⭐ Buy Premium VIP (20 Stars)"])
 def send_stars_invoice(message):
     prices = [types.LabeledPrice(label="VIP Membership (1 Month)", amount=20)]
     bot.send_invoice(
         message.chat.id,
         title="⭐ VIP Premium Pass (1 Month)",
-        description="Unlimited Swiping, Priority Matching & VIP Crown Badge for 30 Days!",
+        description="Unlimited Swiping, Priority Matching & VIP Badge for 30 Days!",
         invoice_payload="vip_subscription_payload",
         provider_token="",
         currency="XTR",
@@ -240,7 +227,7 @@ def my_profile(message):
         caption = f"{badge} {v_badge}\n\n👤 Name: {user[0]}, Age: {user[1]}\n📍 City: {user[3]}\nGender: {user[2]}\nBio: {user[4]}"
         bot.send_photo(user_id, user[5], caption=caption)
 
-# --- MATCHING SYSTEM (REAL PRIORITY, CITY FILTER & 20 LIMIT) ---
+# --- MATCHING SYSTEM (ONLY REAL USERS & 20 SWIPE LIMIT) ---
 def find_match(chat_id):
     is_vip = check_vip_status(chat_id)
 
@@ -250,7 +237,6 @@ def find_match(chat_id):
     c.execute("SELECT COUNT(*) FROM swipes WHERE user_id = ?", (chat_id,))
     swipe_count = c.fetchone()[0]
 
-    # Free User Limit (20 Profile Limit)
     if not is_vip and swipe_count >= 20:
         conn.close()
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -258,7 +244,7 @@ def find_match(chat_id):
         markup.row("🎁 Invite & Earn VIP", "👤 My Profile")
         bot.send_message(
             chat_id, 
-            "⚠️ **Daily Profile Limit Reached!**\n\nAapne apne free 20 profiles dekh liye hain. Premium VIP kharidein ya 3 Dosto ko Invite karke Free VIP unlock karein! ⭐", 
+            "⚠️ **Daily Profile Limit Reached!**\n\nAapne apne free 20 profiles dekh liye hain. VIP Membership kharidein ya 3 Dosto ko Invite karke Free VIP unlock karein! ⭐", 
             reply_markup=markup,
             parse_mode="Markdown"
         )
@@ -268,7 +254,7 @@ def find_match(chat_id):
     u_city = c.fetchone()
     user_city = u_city[0] if u_city else ""
 
-    # Priority 1: Profiles that Liked this user
+    # Real users priority matching
     c.execute("""
         SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
         WHERE user_id IN (SELECT user_id FROM swipes WHERE target_id = ? AND action = 'like')
@@ -277,31 +263,19 @@ def find_match(chat_id):
     """, (chat_id, chat_id))
     target = c.fetchone()
 
-    # Priority 2: Real Users in Same City
     if not target:
         c.execute("""
             SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
-            WHERE user_id != ? AND user_id < 9990 AND city = ?
+            WHERE user_id != ? AND city = ?
             AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
             ORDER BY RANDOM() LIMIT 1
         """, (chat_id, user_city, chat_id))
         target = c.fetchone()
 
-    # Priority 3: Real Users Anywhere
     if not target:
         c.execute("""
             SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
-            WHERE user_id != ? AND user_id < 9990
-            AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
-            ORDER BY RANDOM() LIMIT 1
-        """, (chat_id, chat_id))
-        target = c.fetchone()
-
-    # Priority 4: Backup Demo Profiles
-    if not target:
-        c.execute("""
-            SELECT user_id, name, age, gender, city, bio, photo_id, is_vip, is_verified FROM users 
-            WHERE user_id != ? AND user_id >= 9990
+            WHERE user_id != ?
             AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
             ORDER BY RANDOM() LIMIT 1
         """, (chat_id, chat_id))
@@ -310,7 +284,7 @@ def find_match(chat_id):
     conn.close()
 
     if not target:
-        bot.send_message(chat_id, "No more new profiles right now! Check back later.")
+        bot.send_message(chat_id, "Abhi koi naye real profiles nahi hain! Thodi der me try karein.")
         return
 
     target_id, name, age, gender, city, bio, photo_id, is_vip_target, is_verified = target
@@ -342,7 +316,7 @@ def match_callbacks(call):
     target_id = int(call.data.split("_")[1])
 
     if action_type == "report":
-        bot.answer_callback_query(call.id, "Report submitted. Thank you!")
+        bot.answer_callback_query(call.id, "Report submitted!")
         find_match(user_id)
         return
 
@@ -380,7 +354,7 @@ def match_callbacks(call):
     conn.close()
     find_match(user_id)
 
-# --- REAL INSTANT CHAT ---
+# --- INSTANT CHAT ---
 @bot.message_handler(func=lambda msg: msg.text == "💬 Instant Chat")
 def instant_chat(message):
     user_id = message.from_user.id
@@ -429,25 +403,5 @@ def relay_message(message):
     elif message.photo:
         bot.send_photo(partner_id, message.photo[-1].file_id, caption=message.caption)
 
-# --- ADMIN PANEL ---
-@bot.message_handler(commands=['admin'])
-def admin_panel(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    conn = sqlite3.connect('dating.db')
-    c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM users WHERE user_id < 9990")
-    total_users = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM users WHERE is_vip = 1")
-    vips = c.fetchone()[0]
-    conn.close()
+bot.infinity_polling()
 
-    bot.send_message(ADMIN_ID, f"📊 **Admin Control Panel**\n\nTotal Real Users: {total_users}\nActive VIP Members: {vips}\n\nBroadcast text: `/broadcast Your message here`", parse_mode="Markdown")
-
-@bot.message_handler(commands=['broadcast'])
-def broadcast_msg(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    text = message.text.replace('/broadcast ', '')
-    if not text:
- 
