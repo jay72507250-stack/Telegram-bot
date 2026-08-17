@@ -1,15 +1,15 @@
 import telebot
 from telebot import types
 import sqlite3
+import requests
 
 # ⚠️ YAHAN APNA ORIGINAL BOT TOKEN DAALO
 API_TOKEN = '8505897253:AAGliSrXAa2nh-TzIEMdAm8sR2UcWnbt1dI'
 bot = telebot.TeleBot(API_TOKEN)
 
-ADMIN_ID = 8310681464  # Aapki Admin Telegram User ID
+ADMIN_ID = 8310681464  # Aapki Admin User ID
 
-# --- DATABASE SETUP ---
-# --- DATABASE SETUP WITH DUMMY PROFILES ---
+# --- DATABASE SETUP WITH DEMO PROFILES ---
 def init_db():
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
@@ -27,7 +27,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS swipes 
                  (user_id INTEGER, target_id INTEGER, action TEXT, UNIQUE(user_id, target_id))''')
 
-    # 7 Demo Female Profiles (Agar pehle se nahi hain toh auto-add ho jayengi)
+    # Fake Female Profiles for instant user engagement
     fake_users = [
         (9991, 'Ananya', 21, 'Female', 'Coffee lover & books ☕📚', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'ananya_demo', 0),
         (9992, 'Riya', 20, 'Female', 'Music, travel & good vibes ✨', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'riya_demo', 0),
@@ -46,6 +46,23 @@ def init_db():
 
 init_db()
 
+# AI Response Generator
+def get_ai_female_response(user_text):
+    system_instruction = (
+        "You are Ananya, a 21-year-old girl chatting on an anonymous dating bot. "
+        "Reply naturally in the exact same language used by the user (Hinglish, Hindi, English, etc.). "
+        "Keep your replies short (1-2 sentences max), use realistic emojis, sound cute, friendly, and human. "
+        "Never mention that you are an AI, bot, or virtual assistant."
+    )
+    try:
+        url = "https://text.pollinations.ai/"
+        payload = f"{system_instruction}\n\nUser: {user_text}\nAnanya:"
+        response = requests.get(f"{url}{requests.utils.quote(payload)}", timeout=10)
+        if response.status_code == 200:
+            return response.text.strip()
+    except Exception:
+        pass
+    return "Heyy! Sorry thoda network issue tha 😅 Aur batao kya chal raha hai?"
 
 user_states = {}
 active_chats = {}
@@ -67,24 +84,7 @@ def main_keyboard(user_id):
         markup.row("⭐ Buy Premium VIP (20 Stars)")
     return markup
 
-# --- ADMIN COMMAND TO MANUAL VIP ---
-@bot.message_handler(commands=['addvip'])
-def add_vip_cmd(message):
-    if message.from_user.id != ADMIN_ID:
-        return
-    try:
-        target_user = int(message.text.split()[1])
-        conn = sqlite3.connect('dating.db')
-        c = conn.cursor()
-        c.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (target_user,))
-        conn.commit()
-        conn.close()
-        bot.send_message(message.chat.id, f"✅ User {target_user} is now VIP!")
-        bot.send_message(target_user, "🎉 Congratulations! You have been upgraded to VIP Member!")
-    except Exception:
-        bot.send_message(message.chat.id, "Usage: /addvip USER_ID")
-
-# --- REGISTRATION & START ---
+# --- REGISTRATION ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
@@ -98,7 +98,7 @@ def start_cmd(message):
         bot.send_message(user_id, "Welcome back! Choose an option:", reply_markup=main_keyboard(user_id))
     else:
         user_states[user_id] = {'step': 'NAME'}
-        bot.send_message(user_id, "Welcome to the Dating & Chat Bot! 🎉\n\nWhat is your Name?")
+        bot.send_message(user_id, "Welcome to Dating Bot! 🎉\n\nWhat is your Name?")
 
 @bot.message_handler(func=lambda msg: msg.from_user.id in user_states)
 def registration_flow(message):
@@ -144,7 +144,7 @@ def get_photo(message):
     del user_states[user_id]
     bot.send_message(user_id, "Profile created successfully! 🎉", reply_markup=main_keyboard(user_id))
 
-# --- TELEGRAM STARS PAYMENT SYSTEM ---
+# --- TELEGRAM STARS PAYMENT ---
 @bot.message_handler(func=lambda msg: msg.text in ["⭐ Buy Premium VIP", "⭐ Buy Premium VIP (20 Stars)"])
 def send_stars_invoice(message):
     prices = [types.LabeledPrice(label="VIP Membership (1 Month)", amount=20)]
@@ -153,8 +153,8 @@ def send_stars_invoice(message):
         title="⭐ VIP Premium Pass",
         description="Unlock VIP Crown Badge, Unlimited Swiping, and Direct Matches Access!",
         invoice_payload="vip_subscription_payload",
-        provider_token="",  # Telegram Stars ke liye token empty rehta hai
-        currency="XTR",     # XTR is the currency code for Telegram Stars
+        provider_token="",
+        currency="XTR",
         prices=prices,
         start_parameter="vip-membership"
     )
@@ -171,12 +171,7 @@ def process_successful_payment(message):
     c.execute("UPDATE users SET is_vip = 1 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
-
-    bot.send_message(
-        user_id,
-        "🎉 Payment Successful!\n\nCongratulations, you are now a ⭐ VIP Member! Enjoy your premium perks.",
-        reply_markup=main_keyboard(user_id)
-    )
+    bot.send_message(user_id, "🎉 Payment Successful! You are now a ⭐ VIP Member!", reply_markup=main_keyboard(user_id))
 
 # --- MY PROFILE ---
 @bot.message_handler(func=lambda msg: msg.text in ["👤 My Profile", "✏️ Edit Profile"])
@@ -200,17 +195,29 @@ def my_profile(message):
     else:
         bot.send_message(user_id, "Type /start to set up your profile.")
 
-# --- MATCHING SYSTEM ---
+# --- SMART MATCHING SYSTEM ---
 def find_match(chat_id):
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
+
+    # Prioritize profiles that liked the current user
     c.execute("""
         SELECT user_id, name, age, gender, bio, photo_id, username, is_vip FROM users 
-        WHERE user_id != ? 
+        WHERE user_id IN (SELECT user_id FROM swipes WHERE target_id = ? AND action = 'like')
         AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
-        ORDER BY RANDOM() LIMIT 1
+        LIMIT 1
     """, (chat_id, chat_id))
     target = c.fetchone()
+
+    if not target:
+        c.execute("""
+            SELECT user_id, name, age, gender, bio, photo_id, username, is_vip FROM users 
+            WHERE user_id != ? 
+            AND user_id NOT IN (SELECT target_id FROM swipes WHERE user_id = ?)
+            ORDER BY RANDOM() LIMIT 1
+        """, (chat_id, chat_id))
+        target = c.fetchone()
+
     conn.close()
 
     if not target:
@@ -275,7 +282,7 @@ def match_callbacks(call):
     conn.close()
     find_match(user_id)
 
-# --- INSTANT RANDOM CHAT ---
+# --- INSTANT CHAT WITH AI FALLBACK ---
 @bot.message_handler(func=lambda msg: msg.text == "💬 Instant Chat")
 def instant_chat(message):
     user_id = message.from_user.id
@@ -291,22 +298,23 @@ def instant_chat(message):
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         markup.add("🚫 End Chat")
 
-        bot.send_message(user_id, "Connected! You can now chat anonymously.", reply_markup=markup)
-        bot.send_message(partner_id, "Connected! You can now chat anonymously.", reply_markup=markup)
+        bot.send_message(user_id, "Connected with a real partner! Say hi 👋", reply_markup=markup)
+        bot.send_message(partner_id, "Connected with a real partner! Say hi 👋", reply_markup=markup)
     else:
-        if user_id not in waiting_queue:
-            waiting_queue.append(user_id)
-        bot.send_message(user_id, "Searching for a partner... Please wait.")
+        active_chats[user_id] = "AI_FEMALE"
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("🚫 End Chat")
+        bot.send_message(user_id, "Connected with a partner! 💖\n\n(Say Hi to start chatting)", reply_markup=markup)
 
 @bot.message_handler(func=lambda msg: msg.text == "🚫 End Chat")
 def end_chat(message):
     user_id = message.from_user.id
     if user_id in active_chats:
         partner_id = active_chats.pop(user_id)
-        active_chats.pop(partner_id, None)
-
+        if partner_id != "AI_FEMALE":
+            active_chats.pop(partner_id, None)
+            bot.send_message(partner_id, "Partner ended the chat.", reply_markup=main_keyboard(partner_id))
         bot.send_message(user_id, "Chat ended successfully.", reply_markup=main_keyboard(user_id))
-        bot.send_message(partner_id, "Partner ended the chat.", reply_markup=main_keyboard(partner_id))
     elif user_id in waiting_queue:
         waiting_queue.remove(user_id)
         bot.send_message(user_id, "Stopped searching.", reply_markup=main_keyboard(user_id))
@@ -317,10 +325,20 @@ def end_chat(message):
 def relay_message(message):
     user_id = message.from_user.id
     partner_id = active_chats[user_id]
+
+    if partner_id == "AI_FEMALE":
+        if message.text:
+            bot.send_chat_action(user_id, 'typing')
+            ai_reply = get_ai_female_response(message.text)
+            bot.send_message(user_id, ai_reply)
+        else:
+            bot.send_message(user_id, "Awww pretty photo! 😍")
+        return
+
     if message.text:
         bot.send_message(partner_id, message.text)
     elif message.photo:
         bot.send_photo(partner_id, message.photo[-1].file_id, caption=message.caption)
 
 bot.infinity_polling()
-
+	
