@@ -9,6 +9,7 @@ bot = telebot.TeleBot(API_TOKEN)
 ADMIN_ID = 8310681464  # Aapki Admin Telegram User ID
 
 # --- DATABASE SETUP ---
+# --- DATABASE SETUP WITH DUMMY PROFILES ---
 def init_db():
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
@@ -25,10 +26,26 @@ def init_db():
 
     c.execute('''CREATE TABLE IF NOT EXISTS swipes 
                  (user_id INTEGER, target_id INTEGER, action TEXT, UNIQUE(user_id, target_id))''')
+
+    # 7 Demo Female Profiles (Agar pehle se nahi hain toh auto-add ho jayengi)
+    fake_users = [
+        (9991, 'Ananya', 21, 'Female', 'Coffee lover & books ☕📚', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=500', 'ananya_demo', 0),
+        (9992, 'Riya', 20, 'Female', 'Music, travel & good vibes ✨', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'riya_demo', 0),
+        (9993, 'Priya', 22, 'Female', 'Foodie | Looking for meaningful chat 🍕', 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=500', 'priya_demo', 0),
+        (9994, 'Sneha', 19, 'Female', 'College student | Loves photography 📸', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500', 'sneha_demo', 0),
+        (9995, 'Kavya', 23, 'Female', 'Baking & Movies 🎬', 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=500', 'kavya_demo', 0),
+        (9996, 'Pooja', 21, 'Female', 'Dancing & Fitness enthusiast 💪', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=500', 'pooja_demo', 0),
+        (9997, 'Simran', 20, 'Female', 'Late night talks & long drives 🌙', 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=500', 'simran_demo', 0)
+    ]
+
+    for u in fake_users:
+        c.execute("INSERT OR IGNORE INTO users (user_id, name, age, gender, bio, photo_id, username, is_vip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", u)
+
     conn.commit()
     conn.close()
 
 init_db()
+
 
 user_states = {}
 active_chats = {}
