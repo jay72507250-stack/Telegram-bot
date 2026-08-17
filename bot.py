@@ -2,32 +2,33 @@ import telebot
 from telebot import types
 import sqlite3
 import datetime
+import traceback
 
 # ⚠️ YAHAN APNA TELEGRAM BOT TOKEN DAALO
 API_TOKEN = '8505897253:AAGliSrXAa2nh-TzIEMdAm8sR2UcWnbt1dI'
 bot = telebot.TeleBot(API_TOKEN)
 
-ADMIN_ID = 8310681464  # Aapki Admin User ID
+ADMIN_ID = 8310681464
 
-# --- DATABASE SETUP (NO DUMMY PROFILES) ---
+# --- DATABASE SETUP (AUTO CLEAN SCHEMA) ---
 def init_db():
     conn = sqlite3.connect('dating.db')
     c = conn.cursor()
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (user_id INTEGER PRIMARY KEY, name TEXT, age INTEGER, gender TEXT, city TEXT, bio TEXT, photo_id TEXT, username TEXT, is_vip INTEGER DEFAULT 0, vip_expiry TEXT, referrer_id INTEGER, is_verified INTEGER DEFAULT 0)''')
     
-    for col in [("city", "TEXT"), ("vip_expiry", "TEXT"), ("referrer_id", "INTEGER"), ("is_verified", "INTEGER DEFAULT 0")]:
+    # Auto add missing columns if upgrading old database
+    columns = ["city TEXT", "vip_expiry TEXT", "referrer_id INTEGER", "is_verified INTEGER DEFAULT 0", "username TEXT", "is_vip INTEGER DEFAULT 0"]
+    for col in columns:
         try:
-            c.execute(f"ALTER TABLE users ADD COLUMN {col[0]} {col[1]}")
+            c.execute(f"ALTER TABLE users ADD COLUMN {col}")
         except:
             pass
 
     c.execute('''CREATE TABLE IF NOT EXISTS swipes 
                  (user_id INTEGER, target_id INTEGER, action TEXT, UNIQUE(user_id, target_id))''')
 
-    # Delete existing fake profiles if any
     c.execute("DELETE FROM users WHERE user_id >= 9990")
-
     conn.commit()
     conn.close()
 
@@ -68,7 +69,7 @@ def main_keyboard(user_id):
         markup.row("⭐ Buy Premium VIP (20 Stars)")
     return markup
 
-# --- REGISTRATION FLOW ---
+# --- REGISTRATION START ---
 @bot.message_handler(commands=['start'])
 def start_cmd(message):
     user_id = message.from_user.id
@@ -87,6 +88,65 @@ def start_cmd(message):
         user_states[user_id] = {'step': 'NAME', 'referrer': referrer}
         bot.send_message(user_id, "Welcome to Dating Bot! 🎉\n\nWhat is your Name?", reply_markup=types.ReplyKeyboardRemove())
 
+# --- PHOTO HANDLER (PLACED FIRST TO PREVENT INTERCEPT) ---
+@bot.message_handler(content_types=['photo', 'document'])
+def get_photo(message):
+    user_id = message.from_user.id
+
+    if user_id in active_chats:
+        partner_id = active_chats[user_id]
+        if message.photo:
+            bot.send_photo(partner_id, message.photo[-1].file_id, caption=message.caption)
+        return
+
+    if user_id not in user_states or user_states[user_id].get('step') != 'PHOTO':
+        bot.send_message(user_id, "⚠️ Active session nahi mila. Kripya /start dabayein.")
+        return
+
+    try:
+        photo_id = None
+        if message.photo:
+            photo_id = message.photo[-1].file_id
+        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
+            photo_id = message.document.file_id
+        else:
+            bot.send_message(user_id, "⚠️ Kripya valid Photo/Image file bhejein!")
+            return
+
+        data = user_states[user_id]
+        username = message.from_user.username or ""
+
+        conn = sqlite3.connect('dating.db')
+        c = conn.cursor()
+        c.execute("""
+            INSERT OR REPLACE INTO users (user_id, name, age, gender, city, bio, photo_id, username, is_vip, referrer_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        """, (user_id, data['name'], data['age'], data['gender'], data['city'], data['bio'], photo_id, username, data.get('referrer')))
+
+        if data.get('referrer'):
+            ref_id = data['referrer']
+            c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (ref_id,))
+            ref_count = c.fetchone()[0]
+            if ref_count >= 3:
+                expiry = (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+                c.execute("UPDATE users SET is_vip = 1, vip_expiry = ? WHERE user_id = ?", (expiry, ref_id))
+                try:
+                    bot.send_message(ref_id, "🎉 Congratulations! You referred 3 friends and unlocked 1 Month FREE VIP Pass! ⭐")
+                except:
+                    pass
+
+        conn.commit()
+        conn.close()
+
+        del user_states[user_id]
+        bot.send_message(user_id, "Profile created successfully! 🎉", reply_markup=main_keyboard(user_id))
+
+    except Exception as e:
+        print(f"Error in photo upload: {e}")
+        traceback.print_exc()
+        bot.send_message(user_id, f"⚠️ An error occurred while saving photo. Please type /start again.")
+
+# --- REGISTRATION STEPS ---
 @bot.message_handler(func=lambda msg: msg.from_user.id in user_states)
 def registration_flow(message):
     user_id = message.from_user.id
@@ -131,47 +191,6 @@ def registration_flow(message):
         user_states[user_id]['bio'] = bio
         user_states[user_id]['step'] = 'PHOTO'
         bot.send_message(user_id, "Now send a Photo of yourself:", reply_markup=types.ReplyKeyboardRemove())
-
-# --- PHOTO & DOCUMENT HANDLER (FIXED) ---
-@bot.message_handler(content_types=['photo', 'document'], func=lambda msg: msg.from_user.id in user_states and user_states[msg.from_user.id].get('step') == 'PHOTO')
-def get_photo(message):
-    user_id = message.from_user.id
-    
-    if message.photo:
-        photo_id = message.photo[-1].file_id
-    elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
-        photo_id = message.document.file_id
-    else:
-        bot.send_message(user_id, "⚠️ Please send a valid Image/Photo file!")
-        return
-
-    data = user_states[user_id]
-    username = message.from_user.username or ""
-
-    conn = sqlite3.connect('dating.db')
-    c = conn.cursor()
-    c.execute("""
-        INSERT OR REPLACE INTO users (user_id, name, age, gender, city, bio, photo_id, username, is_vip, referrer_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
-    """, (user_id, data['name'], data['age'], data['gender'], data['city'], data['bio'], photo_id, username, data.get('referrer')))
-    
-    if data.get('referrer'):
-        ref_id = data['referrer']
-        c.execute("SELECT COUNT(*) FROM users WHERE referrer_id = ?", (ref_id,))
-        ref_count = c.fetchone()[0]
-        if ref_count >= 3:
-            expiry = (datetime.datetime.now() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
-            c.execute("UPDATE users SET is_vip = 1, vip_expiry = ? WHERE user_id = ?", (expiry, ref_id))
-            try:
-                bot.send_message(ref_id, "🎉 Congratulations! You referred 3 friends and unlocked 1 Month FREE VIP Pass! ⭐")
-            except:
-                pass
-
-    conn.commit()
-    conn.close()
-
-    del user_states[user_id]
-    bot.send_message(user_id, "Profile created successfully! 🎉", reply_markup=main_keyboard(user_id))
 
 # --- VIP STARS PAYMENT ---
 @bot.message_handler(func=lambda msg: msg.text in ["⭐ Buy Premium VIP", "⭐ Buy Premium VIP (20 Stars)"])
@@ -236,7 +255,7 @@ def my_profile(message):
         caption = f"{badge} {v_badge}\n\n👤 Name: {user[0]}, Age: {user[1]}\n📍 City: {user[3]}\nGender: {user[2]}\nBio: {user[4]}"
         bot.send_photo(user_id, user[5], caption=caption)
 
-# --- MATCHING SYSTEM (ONLY REAL USERS & 20 SWIPE LIMIT) ---
+# --- MATCHING SYSTEM ---
 def find_match(chat_id):
     is_vip = check_vip_status(chat_id)
 
